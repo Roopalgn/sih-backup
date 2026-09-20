@@ -1,0 +1,85 @@
+# SIH #26079 — Forecast Bust Detection Configuration
+
+# Geographic domain (Indian subcontinent)
+domain:
+  lat_min: 6.0
+  lat_max: 38.0
+  lon_min: 68.0
+  lon_max: 98.0
+  resolution: 0.25  # degrees
+
+# Temporal coverage
+data:
+  train_years: [2018, 2019, 2020, 2021]
+  val_years: [2022]
+  test_years: [2023]
+  lead_days: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  imd_start: 2018
+  imd_end: 2023
+  gefs_bucket: "noaa-gefs-pds"
+  era5_region: [38, 68, 6, 98]  # North, West, South, East
+
+# Paths
+paths:
+  raw_data: "data/raw"
+  processed_data: "data/processed"
+  checkpoints: "checkpoints"
+  results: "results"
+  logs: "logs"
+  precomputed: "dashboard/precomputed"
+
+# Bust label definition
+bust:
+  percentile_threshold: 90  # P90 of historical errors
+  variables:  # Variables used for bust labelling
+    - rainfall
+    - temperature
+    - z500
+  z500_rmse_threshold: 60.0  # metres — classical bust criterion
+  acc_threshold: 0.40  # ACC < 0.40 = bust for Z500
+
+# ML Model
+model:
+  in_channels: 14  # forecast vars + static + lead-time encoding
+  encoder_channels: [64, 128, 256, 512]
+  loss_alpha: 0.4  # weight for regression vs classification
+  focal_gamma: 2.0
+  learning_rate: 3.0e-4
+  weight_decay: 1.0e-5
+  batch_size: 8
+  num_epochs: 50
+  early_stopping_patience: 8
+  scheduler: cosine_annealing
+  grad_clip: 1.0
+  amp: true  # automatic mixed precision
+
+# API
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cache_dir: "dashboard/precomputed"
+
+# Dashboard
+dashboard:
+  port: 8501
+  map_center: [20.0, 83.0]  # India center
+  map_zoom: 5
+
+# IMD Meteorological Subdivisions (for region-wise evaluation)
+subdivisions:
+  - name: "Gangetic West Bengal"
+    code: GWB
+  - name: "Odisha"
+    code: ORI
+  - name: "Vidarbha"
+    code: VID
+  - name: "Konkan & Goa"
+    code: KOG
+  - name: "Northwest India"
+    code: NWI
+  - name: "Northeast India"
+    code: NEI
+  - name: "Peninsular India"
+    code: PEN
+  - name: "Bay of Bengal"
+    code: BOB

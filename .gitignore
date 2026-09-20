@@ -1,0 +1,53 @@
+# Data (large files)
+data/raw/
+data/processed/
+*.nc
+*.grib
+*.grib2
+*.zarr/
+*.h5
+*.hdf5
+
+# Model checkpoints
+checkpoints/
+*.pt
+*.pth
+*.onnx
+
+# Results (auto-generated)
+results/
+logs/
+wandb/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Env
+.env
+.venv/
+env/
+venv/
+.python-version
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# CDS API credentials (NEVER commit)
+.cdsapirc
+
+# OS
+.DS_Store
+Thumbs.db
