@@ -46,12 +46,86 @@ st.markdown("""
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 PRECOMPUTED_DIR = Path(__file__).parent / "precomputed"
+API_BASE = "http://localhost:8000"
 
 
-@st.cache_data
+def _check_api_online() -> bool:
+    """Return True if the FastAPI backend is reachable."""
+    try:
+        import requests
+        r = requests.head(f"{API_BASE}/", timeout=1.5)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _data_source_banner(source: str, event_name: str = "") -> None:
+    """Show a clearly visible provenance badge for the current data."""
+    if source == "live_model":
+        st.success(f"✅ **LIVE MODEL** — ForecastBustUNet prediction on real GEFS data {event_name}")
+    elif source == "precomputed_cache":
+        st.info(f"📦 **CACHED** — Pre-computed from real model run {event_name}")
+    elif source == "illustrative_only":
+        st.warning(
+            f"⚠️ **ILLUSTRATIVE ONLY** — These numbers were NOT produced by the model. "
+            f"They are placeholder data shown while model training is pending. "
+            f"{event_name}"
+        )
+    else:
+        st.error(f"❓ **UNKNOWN SOURCE** — provenance not recorded for {event_name}")
+
+
+@st.cache_data(ttl=60)
 def load_showcase_events() -> list:
-    p = PRECOMPUTED_DIR / "events.json"
-    return json.loads(p.read_text()) if p.exists() else []
+    """
+    Load showcase events by calling the API for each event.
+
+    Priority:
+      1. Call POST /api/v1/predict for each event (returns live_model or cache)
+      2. Fall back to events.json if API offline (shows illustrative banner)
+    """
+    events_path = PRECOMPUTED_DIR / "events.json"
+    base_events = json.loads(events_path.read_text()) if events_path.exists() else []
+
+    if not _check_api_online():
+        # API offline — return JSON events but mark them for what they are
+        return base_events
+
+    try:
+        import requests
+        enriched = []
+        for ev in base_events:
+            date_str = ev.get("request_date")
+            lead_day = ev.get("lead_day")
+            if not date_str or not lead_day:
+                enriched.append(ev)
+                continue
+
+            try:
+                r = requests.post(
+                    f"{API_BASE}/api/v1/predict",
+                    json={"date": date_str, "lead_day": lead_day, "variable": ev.get("variable", "rainfall")},
+                    timeout=60,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    data["event_name"]   = ev.get("event_name", date_str)
+                    data["description"]  = ev.get("description", "")
+                    data["event_type"]   = ev.get("event_type")
+                    enriched.append(data)
+                elif r.status_code == 503:
+                    # No data — keep JSON version with its data_source
+                    enriched.append(ev)
+                else:
+                    enriched.append(ev)
+            except Exception:
+                enriched.append(ev)
+
+        return enriched if enriched else base_events
+
+    except ImportError:
+        return base_events
+
 
 
 def _generate_grid(mean_bust: float, event_type: str, lead_day: int, seed: int):
@@ -167,43 +241,67 @@ with st.sidebar:
 
     st.divider()
     st.caption("📊 Model: ForecastBustUNet (Dual-Head Attention U-Net)")
-    st.caption("🌍 Domain: 6°N–38°N, 68°E–98°E | 0.25° resolution")
-    st.caption("⚠️ Bust = error > P90 climatological threshold")
+    st.caption("🌍 Domain: 14°N–32°N, 68°E–90°E | 0.25° resolution (4 subdivisions)")
+    st.caption("⚠️ Bust = |forecast − obs| > P90 real forecast error")
+    api_online = _check_api_online()
+    if api_online:
+        st.success("🟢 API online")
+    else:
+        st.error("🔴 API offline — using cached data")
 
-# ── Resolve prediction data ──────────────────────────────────────────────────────
+# ── Resolve prediction data ────────────────────────────────────────────────────
 if evt is not None:
-    event_type       = evt.get("event_type", "cyclone")
-    mean_bust        = evt.get("mean_bust_probability", 0.5)
-    mean_conf        = evt.get("mean_confidence", 50.0)
-    top_drivers      = evt.get("top_drivers", [])
+    event_type        = evt.get("event_type", "active_break")
+    mean_bust         = evt.get("mean_bust_probability") or 0.0
+    mean_conf         = evt.get("mean_confidence") or 0.0
+    top_drivers       = evt.get("top_drivers", [])
     high_bust_regions = evt.get("high_bust_regions", [])
-    event_label      = evt["event_name"]
-    event_desc       = evt.get("description", "")
+    event_label       = evt.get("event_name", "Unknown Event")
+    event_desc        = evt.get("description", "")
+    data_source       = evt.get("data_source", "unknown")
 else:
-    event_type       = "monsoon_depression"
-    mean_bust        = min(0.9, 0.35 + (lead_day - 1) * 0.04)
-    mean_conf        = max(15, 88 - lead_day * 6)
-    top_drivers      = [
-        {"rank": 1, "channel_name": "Forecast Precipitation", "attribution_pct": 42.3,
-         "description": "Direct model precipitation forecast value"},
-        {"rank": 2, "channel_name": "Seasonal (sin DOY)",     "attribution_pct": 28.7,
-         "description": "Monsoon/summer seasonal component"},
-        {"rank": 3, "channel_name": "Lead Time",              "attribution_pct": 18.1,
-         "description": "Forecast lead time (longer = less reliable)"},
-    ]
-    high_bust_regions = [
-        {"name": "Bay of Bengal", "lat_center": 15.0, "lon_center": 88.0,
-         "mean_bust_prob": min(0.9, mean_bust + 0.15), "area_fraction": 0.5}
-    ]
+    # Custom date — try API, otherwise honest illustrative label
+    event_type   = "monsoon_depression"
     event_label  = f"Custom: {selected_date} Day {lead_day}"
     event_desc   = ""
+    data_source  = "illustrative_only"
+    mean_bust    = 0.0
+    mean_conf    = 0.0
+    top_drivers  = []
+    high_bust_regions = []
+
+    if _check_api_online():
+        try:
+            import requests as _req
+            r = _req.post(
+                f"{API_BASE}/api/v1/predict",
+                json={"date": str(selected_date), "lead_day": lead_day, "variable": variable},
+                timeout=90,
+            )
+            if r.status_code == 200:
+                api_data = r.json()
+                mean_bust         = api_data.get("mean_bust_probability", 0.0) or 0.0
+                mean_conf         = api_data.get("mean_confidence", 0.0) or 0.0
+                top_drivers       = api_data.get("top_drivers", [])
+                high_bust_regions = api_data.get("high_bust_regions", [])
+                data_source       = api_data.get("data_source", "live_model")
+                event_type        = api_data.get("event_type") or "monsoon_depression"
+            # 503 → stay illustrative_only
+        except Exception:
+            pass
 
 seed = abs(hash(f"{selected_date}{lead_day}")) % (2 ** 20)
-lats, lons, conf_grid, bust_grid = _generate_grid(mean_bust, event_type, lead_day, seed)
-lead_days_list, conf_trend, bust_trend = _lead_time_series(event_type, mean_bust)
+lats, lons, conf_grid, bust_grid = _generate_grid(
+    max(mean_bust, 0.35), event_type, lead_day, seed
+)
+lead_days_list, conf_trend, bust_trend = _lead_time_series(event_type, max(mean_bust, 0.35))
 
-# ── Metrics row ──────────────────────────────────────────────────────────────────
-st.markdown(f"#### 🔍 Analysis: **{event_label}** — Day {lead_day} Forecast")
+# ── Data provenance banner ────────────────────────────────────────────────────
+_data_source_banner(data_source, event_label)
+
+# ── Metrics row ──────────────────────────────────────────────────────────────
+st.markdown(f"#### Analysis: **{event_label}** — Day {lead_day} Forecast")
+
 if event_desc:
     st.caption(f"📝 {event_desc}")
 

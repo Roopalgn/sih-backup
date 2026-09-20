@@ -3,17 +3,18 @@ dataset.py
 ----------
 PyTorch Dataset for the forecast bust detection model.
 
-Loads the preprocessed Zarr dataset produced by data/preprocess.py.
+Loads the preprocessed Zarr dataset(s) produced by data/preprocess.py.
 
 Each sample:
   features:  [C, H, W]  - multi-channel input (forecast + static + temporal encoding)
-  error_map: [1, H, W]  - regression target (absolute forecast error)
-  bust_map:  [1, H, W]  - classification target (binary bust label)
+  error_map: [1, H, W]  - regression target (absolute forecast error, mm/day)
+  bust_map:  [1, H, W]  - classification target (binary bust label, 0 or 1)
 
-Splits are year-based:
-  train: 2018-2021
-  val:   2022
-  test:  2023
+Split files (new per-split zarr, produced by current preprocess.py):
+  dataset_train.zarr, dataset_val.zarr, dataset_test.zarr
+
+Legacy fallback (single zarr, year-filtered):
+  dataset.zarr  — filtered by year using init_date coordinate
 """
 
 from __future__ import annotations
@@ -26,73 +27,97 @@ import torch
 from torch.utils.data import Dataset
 
 
+
 class BustDataset(Dataset):
     """
     PyTorch Dataset wrapping the preprocessed Zarr dataset.
 
+    Supports two file layouts produced by preprocess.py:
+      1. Per-split zarr files: dataset_train.zarr, dataset_val.zarr, dataset_test.zarr
+         (produced by current preprocess.py — preferred)
+      2. Single zarr with year-based filtering: dataset.zarr
+         (legacy fallback)
+
     Args:
-        zarr_path: Path to dataset.zarr
+        zarr_path: Path to a zarr file, or directory containing split zarr files.
+                   Can be 'data/processed/' (will auto-find split file)
+                   or 'data/processed/dataset_train.zarr' (explicit).
         split: 'train' | 'val' | 'test'
-        train_years: Years to include in train split
-        val_years: Years to include in val split
-        test_years: Years to include in test split
-        transform: Optional callable applied to (features, error_map, bust_map) tuple
-        max_samples: Optional cap on number of samples (for quick testing)
+        transform: Optional callable applied to each sample dict
+        max_samples: Optional cap (for quick testing)
     """
 
-    SPLIT_YEARS: dict[str, list[int]] = {
-        "train": [2018, 2019, 2020, 2021],
-        "val": [2022],
-        "test": [2023],
+    SPLIT_YEARS: dict = {
+        "train": [2021],
+        "val":   [2022],
+        "test":  [2022],
     }
 
     def __init__(
         self,
         zarr_path: str,
         split: str = "train",
-        train_years: list[int] | None = None,
-        val_years: list[int] | None = None,
-        test_years: list[int] | None = None,
         transform=None,
         max_samples: int | None = None,
+        # Legacy year-override params (kept for backward compat)
+        train_years: list | None = None,
+        val_years:   list | None = None,
+        test_years:  list | None = None,
     ):
         super().__init__()
         assert split in ("train", "val", "test"), f"split must be train/val/test, got '{split}'"
 
-        # Override default year splits if provided
-        if train_years:
-            self.SPLIT_YEARS["train"] = train_years
-        if val_years:
-            self.SPLIT_YEARS["val"] = val_years
-        if test_years:
-            self.SPLIT_YEARS["test"] = test_years
-
-        self.split = split
+        self.split     = split
         self.transform = transform
 
-        print(f"[Dataset] Loading {split} data from {zarr_path}")
-        ds = xr.open_zarr(zarr_path)
+        import os
+        zarr_path = str(zarr_path)
 
-        # Filter samples by year
-        target_years = self.SPLIT_YEARS[split]
-        if "init_date" in ds:
-            dates = pd.DatetimeIndex(ds["init_date"].values)
-            mask = dates.year.isin(target_years)
-            indices = np.where(mask)[0]
+        # Auto-detect per-split vs. single zarr
+        split_zarr = os.path.join(os.path.dirname(zarr_path), f"dataset_{split}.zarr")
+        if os.path.isdir(split_zarr):
+            load_path = split_zarr
+            year_filter = False
+            print(f"[Dataset] Loading {split} split from {split_zarr}")
+        elif os.path.isdir(zarr_path):
+            load_path = zarr_path
+            year_filter = True
+            print(f"[Dataset] Loading from single zarr {zarr_path}, filtering by year for '{split}'")
         else:
-            # Fall back to all samples
+            raise FileNotFoundError(
+                f"No Zarr data found at {zarr_path} or {split_zarr}. "
+                f"Run: python data/preprocess.py"
+            )
+
+        ds = xr.open_zarr(load_path)
+
+        if year_filter:
+            # Legacy: filter by year from init_date coordinate
+            if train_years:
+                self.SPLIT_YEARS["train"] = train_years
+            if val_years:
+                self.SPLIT_YEARS["val"] = val_years
+            if test_years:
+                self.SPLIT_YEARS["test"] = test_years
+            target_years = self.SPLIT_YEARS[split]
+
+            if "init_date" in ds:
+                dates = pd.DatetimeIndex(ds["init_date"].values)
+                mask = dates.year.isin(target_years)
+                indices = np.where(mask)[0]
+            else:
+                indices = np.arange(ds.dims.get("sample", len(ds["features"])))
+        else:
             indices = np.arange(ds.dims.get("sample", len(ds["features"])))
 
         if max_samples is not None:
             indices = indices[:max_samples]
 
-        # Load all data into memory (for small datasets) or keep as Zarr references
-        self.features = ds["features"].values[indices]   # [N, C, H, W]
-        self.error_maps = ds["error_map"].values[indices] # [N, 1, H, W]
-        self.bust_maps = ds["bust_map"].values[indices]   # [N, 1, H, W]
-        self.n_samples = len(indices)
+        self.features   = ds["features"].values[indices]    # [N, C, H, W]
+        self.error_maps = ds["error_map"].values[indices]   # [N, 1, H, W]
+        self.bust_maps  = ds["bust_map"].values[indices]    # [N, 1, H, W]
+        self.n_samples  = len(indices)
 
-        # Store metadata
         if "init_date" in ds:
             self.dates = pd.DatetimeIndex(ds["init_date"].values[indices])
         else:
@@ -111,17 +136,16 @@ class BustDataset(Dataset):
     def __len__(self) -> int:
         return self.n_samples
 
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        features = torch.from_numpy(self.features[idx].astype(np.float32))
+    def __getitem__(self, idx: int) -> dict:
+        features  = torch.from_numpy(self.features[idx].astype(np.float32))
         error_map = torch.from_numpy(self.error_maps[idx].astype(np.float32))
-        bust_map = torch.from_numpy(self.bust_maps[idx].astype(np.float32))
+        bust_map  = torch.from_numpy(self.bust_maps[idx].astype(np.float32))
 
         sample = {
-            "features": features,
+            "features":  features,
             "error_map": error_map,
-            "bust_map": bust_map,
+            "bust_map":  bust_map,
         }
-
         if self.dates is not None:
             sample["date"] = str(self.dates[idx].date())
         if self.lead_days is not None:
@@ -137,5 +161,6 @@ class BustDataset(Dataset):
         return self.features.shape[1]
 
     @property
-    def spatial_shape(self) -> tuple[int, int]:
+    def spatial_shape(self) -> tuple:
         return self.features.shape[2], self.features.shape[3]
+

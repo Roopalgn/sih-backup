@@ -82,17 +82,56 @@ async def root():
 
 @app.get("/api/v1/info", tags=["Info"])
 async def info():
-    """Return model and dataset information."""
+    """Return model and dataset information — all strings reflect actual implementation."""
+    model_loaded = False
+    try:
+        from api.routes.predict import _model
+        model_loaded = _model is not None
+    except Exception:
+        pass
+
     return {
-        "model": "ForecastBustUNet (Dual-Head Attention U-Net)",
-        "inputs": ["GFS/GEFS Forecast Fields", "IMD Observations (ground truth for training)"],
-        "outputs": [
-            "Bust Probability Map [0-1] per grid cell",
-            "Forecast Error Map (predicted RMSE)",
-            "Confidence Indicator [0-100%] per grid cell",
+        "model": "ForecastBustUNet (Dual-Head Attention U-Net, 6→32→64→128→256 channels)",
+        "model_loaded": model_loaded,
+        "checkpoint": str(Path("checkpoints/best_model.pt").resolve()),
+        "inputs": [
+            "NOAA GEFSv12 control-member rainfall forecast (0.25°, APCP)",
+            "Coordinate fields: latitude (norm), longitude (norm)",
+            "Temporal: lead-day (norm), sin(DOY), cos(DOY)",
         ],
-        "domain": "Indian Subcontinent (6°N-38°N, 68°E-98°E) at 0.25° resolution",
-        "lead_times": "Day 1 to Day 10",
-        "bust_definition": "P90 of climatological gridded forecast error per cell and lead day",
-        "explainability": "Integrated Gradients (Captum) — top meteorological drivers per prediction",
+        "n_channels": 6,
+        "outputs": [
+            "Bust Probability [0, 1] per grid cell (Sigmoid head)",
+            "Forecast Error Map (Softplus head, mm/day)",
+            "Confidence = 100 × exp(−error/σ) × (1 − bust_prob) per cell",
+        ],
+        "domain": "14–32°N, 68–90°E (union bounding box: Odisha, Gangetic WB, Konkan & Goa, NW India)",
+        "resolution": "0.25° × 0.25°",
+        "lead_times": "Days 3, 5, 7, 10 (4 lead times)",
+        "data_window": (
+            "Training: Jun–Sep 2021 | Validation: Aug 2022 | Test: Jun–Jul + Sep 2022"
+        ),
+        "gefs_era": "GEFSv12 (available from 2020-09-01 onward)",
+        "bust_definition": (
+            "Bust = 1 where |GEFS forecast − IMD obs| > P90. "
+            "P90 is the 90th percentile of real |forecast − observation| errors "
+            "over the training window, pooled across the domain (not per-cell). "
+            "Per-cell P90 requires a larger training window and is future work."
+        ),
+        "explainability": (
+            "Integrated Gradients (hand-rolled, Captum-compatible implementation in model/explain.py). "
+            "NOT using Captum library — manual Riemann approximation with n_steps=25. "
+            "Top 3 meteorological drivers per prediction computed live."
+        ),
+        "data_source_values": {
+            "live_model": "ForecastBustUNet ran on real preprocessed forecast data",
+            "precomputed_cache": "Loaded from pre-saved JSON (may be live_model or illustrative)",
+            "illustrative_only": "Hand-authored numbers, NOT model output — flagged in UI",
+        },
+        "status": (
+            "Prototype — trained on 2 monsoon seasons (~120 dates). "
+            "Temperature variable not implemented. Ensemble spread not implemented. "
+            "See README Scope & Status section."
+        ),
     }
+

@@ -1,23 +1,26 @@
 # SIH #26079 — Forecast Bust Detection Configuration
+# Scope: 4 IMD subdivisions, 2021–2022 monsoon seasons, GEFSv12 era only
 
-# Geographic domain (Indian subcontinent)
+# Geographic domain — union bounding box over 4 subdivisions
+# Covers: Odisha, Gangetic WB, Konkan & Goa, NW India
 domain:
-  lat_min: 6.0
-  lat_max: 38.0
+  lat_min: 14.0
+  lat_max: 32.0
   lon_min: 68.0
-  lon_max: 98.0
-  resolution: 0.25  # degrees
+  lon_max: 90.0
+  resolution: 0.25  # degrees — matches GEFSv12 0.25° native grid
 
-# Temporal coverage
+# Temporal coverage (GEFSv12 era only: 2020-09-01+)
 data:
-  train_years: [2018, 2019, 2020, 2021]
+  train_years: [2021]
+  train_months: [6, 7, 8, 9]       # Jun–Sep 2021
   val_years: [2022]
-  test_years: [2023]
-  lead_days: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-  imd_start: 2018
-  imd_end: 2023
-  gefs_bucket: "noaa-gefs-pds"
-  era5_region: [38, 68, 6, 98]  # North, West, South, East
+  val_months: [8]                   # Aug 2022 only
+  test_years: [2022]
+  test_months: [6, 7, 9]            # Jun, Jul, Sep 2022 (Aug held out for val)
+  lead_days: [3, 5, 7, 10]          # 4 lead times only
+  gefs_min_date: "2020-09-01"       # GEFSv12 cutoff — error raised if earlier
+  gefs_bucket: "noaa-gefs-pds"      # AWS S3 open data
 
 # Paths
 paths:
@@ -28,30 +31,29 @@ paths:
   logs: "logs"
   precomputed: "dashboard/precomputed"
 
-# Bust label definition
+# Bust label definition — uses REAL forecast error, not observation anomaly
 bust:
-  percentile_threshold: 90  # P90 of historical errors
-  variables:  # Variables used for bust labelling
-    - rainfall
-    - temperature
-    - z500
-  z500_rmse_threshold: 60.0  # metres — classical bust criterion
-  acc_threshold: 0.40  # ACC < 0.40 = bust for Z500
+  percentile_threshold: 90  # P90 of |forecast - observation| over training window
+  min_samples_per_cell: 20  # If fewer samples, pool across subdivisions
+  variables:
+    - rainfall              # Temperature removed until that pipeline exists
+  z500_rmse_threshold: 60.0 # (reference only — not used in rainfall-only mode)
+  acc_threshold: 0.40
 
-# ML Model
+# ML Model — downsized to train on CPU in ~15–30 min
 model:
-  in_channels: 14  # forecast vars + static + lead-time encoding
-  encoder_channels: [64, 128, 256, 512]
-  loss_alpha: 0.4  # weight for regression vs classification
+  in_channels: 6            # [forecast_precip, lat_norm, lon_norm, lead_norm, sin_doy, cos_doy]
+  encoder_channels: [32, 64, 128, 256]
+  loss_alpha: 0.4
   focal_gamma: 2.0
   learning_rate: 3.0e-4
   weight_decay: 1.0e-5
   batch_size: 8
-  num_epochs: 50
-  early_stopping_patience: 8
+  num_epochs: 10            # Reduced — focus on correctness, not convergence
+  early_stopping_patience: 3
   scheduler: cosine_annealing
   grad_clip: 1.0
-  amp: true  # automatic mixed precision
+  amp: true
 
 # API
 api:
@@ -62,24 +64,33 @@ api:
 # Dashboard
 dashboard:
   port: 8501
-  map_center: [20.0, 83.0]  # India center
-  map_zoom: 5
+  map_center: [22.0, 79.0]   # Centre of union bounding box
+  map_zoom: 6
 
-# IMD Meteorological Subdivisions (for region-wise evaluation)
+# IMD Meteorological Subdivisions — 4 selected, with bounding boxes
+# Full grid covers union of all four; subdivision boxes used for evaluation
 subdivisions:
-  - name: "Gangetic West Bengal"
-    code: GWB
   - name: "Odisha"
     code: ORI
-  - name: "Vidarbha"
-    code: VID
+    lat_min: 17.0
+    lat_max: 22.0
+    lon_min: 82.0
+    lon_max: 88.0
+  - name: "Gangetic West Bengal"
+    code: GWB
+    lat_min: 21.0
+    lat_max: 25.0
+    lon_min: 85.0
+    lon_max: 90.0
   - name: "Konkan & Goa"
     code: KOG
+    lat_min: 14.0
+    lat_max: 20.0
+    lon_min: 72.0
+    lon_max: 76.0
   - name: "Northwest India"
     code: NWI
-  - name: "Northeast India"
-    code: NEI
-  - name: "Peninsular India"
-    code: PEN
-  - name: "Bay of Bengal"
-    code: BOB
+    lat_min: 26.0
+    lat_max: 32.0
+    lon_min: 68.0
+    lon_max: 78.0

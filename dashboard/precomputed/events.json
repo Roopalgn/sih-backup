@@ -1,98 +1,102 @@
 [
   {
-    "event_name": "Cyclone Amphan",
+    "event_name": "Monsoon Onset 2021",
+    "request_date": "2021-06-15",
+    "lead_day": 5,
+    "variable": "rainfall",
+    "description": "Monsoon onset phase over Konkan & Goa / Odisha — first rains of 2021 season.",
+    "event_type": "active_break",
+    "data_source": "illustrative_only",
+    "data_source_reason": "Showcase event pre-populated before model training. Replace by running dashboard/generate_showcase_events.py after training.",
+    "mean_bust_probability": null,
+    "mean_confidence": null,
+    "top_drivers": [],
+    "high_bust_regions": [],
+    "grid_latitudes": [],
+    "grid_longitudes": [],
+    "bust_probability_map": [],
+    "error_magnitude_map": [],
+    "confidence_map": [],
+    "from_cache": true
+  },
+  {
+    "event_name": "Peak Monsoon 2021",
+    "request_date": "2021-08-10",
+    "lead_day": 5,
+    "variable": "rainfall",
+    "description": "Active monsoon phase — peak precipitation over Gangetic WB and Odisha.",
+    "event_type": "monsoon_depression",
+    "data_source": "illustrative_only",
+    "data_source_reason": "Showcase event pre-populated before model training. Replace by running dashboard/generate_showcase_events.py after training.",
+    "mean_bust_probability": null,
+    "mean_confidence": null,
+    "top_drivers": [],
+    "high_bust_regions": [],
+    "grid_latitudes": [],
+    "grid_longitudes": [],
+    "bust_probability_map": [],
+    "error_magnitude_map": [],
+    "confidence_map": [],
+    "from_cache": true
+  },
+  {
+    "event_name": "Monsoon Break 2021",
+    "request_date": "2021-09-15",
+    "lead_day": 7,
+    "variable": "rainfall",
+    "description": "Break phase — suppressed rainfall over peninsula, active over Himalayas.",
+    "event_type": "active_break",
+    "data_source": "illustrative_only",
+    "data_source_reason": "Showcase event pre-populated before model training. Replace by running dashboard/generate_showcase_events.py after training.",
+    "mean_bust_probability": null,
+    "mean_confidence": null,
+    "top_drivers": [],
+    "high_bust_regions": [],
+    "grid_latitudes": [],
+    "grid_longitudes": [],
+    "bust_probability_map": [],
+    "error_magnitude_map": [],
+    "confidence_map": [],
+    "from_cache": true
+  },
+  {
+    "event_name": "Monsoon Onset 2022",
+    "request_date": "2022-06-25",
+    "lead_day": 3,
+    "variable": "rainfall",
+    "description": "Monsoon 2022 onset over Konkan coast — validation-window event.",
+    "event_type": "active_break",
+    "data_source": "illustrative_only",
+    "data_source_reason": "Showcase event pre-populated before model training. Replace by running dashboard/generate_showcase_events.py after training.",
+    "mean_bust_probability": null,
+    "mean_confidence": null,
+    "top_drivers": [],
+    "high_bust_regions": [],
+    "grid_latitudes": [],
+    "grid_longitudes": [],
+    "bust_probability_map": [],
+    "error_magnitude_map": [],
+    "confidence_map": [],
+    "from_cache": true
+  },
+  {
+    "event_name": "Cyclone Amphan OOD Test",
     "request_date": "2020-05-16",
     "lead_day": 4,
     "variable": "rainfall",
-    "description": "Super Cyclone Amphan - Bay of Bengal. Forecast busts over Odisha and West Bengal coast D3-D5.",
+    "description": "Cyclone Amphan (May 2020). Pre-GEFSv12 era — no training data exists for this date. Used as out-of-distribution generalization test only after training on 2021–2022.",
     "event_type": "cyclone",
-    "mean_bust_probability": 0.68,
-    "mean_confidence": 34.2,
-    "top_drivers": [
-      {"rank": 1, "channel_name": "Forecast Precipitation", "attribution_pct": 48.2, "description": "Rapid intensification over Bay of Bengal warm eddy caused precipitation underestimation"},
-      {"rank": 2, "channel_name": "Lead Time", "attribution_pct": 31.5, "description": "4-day lead time with rapidly evolving system increases uncertainty"},
-      {"rank": 3, "channel_name": "Seasonal (sin DOY)", "attribution_pct": 14.8, "description": "Pre-monsoon cyclone season over Bay of Bengal"}
-    ],
-    "high_bust_regions": [
-      {"name": "Bay of Bengal", "lat_center": 17.5, "lon_center": 87.5, "mean_bust_prob": 0.84, "area_fraction": 0.76},
-      {"name": "Gangetic WB", "lat_center": 23.0, "lon_center": 87.5, "mean_bust_prob": 0.71, "area_fraction": 0.64},
-      {"name": "Odisha", "lat_center": 20.5, "lon_center": 84.5, "mean_bust_prob": 0.62, "area_fraction": 0.51}
-    ]
-  },
-  {
-    "event_name": "Kerala Floods 2018",
-    "request_date": "2018-08-12",
-    "lead_day": 5,
-    "variable": "rainfall",
-    "description": "Catastrophic Kerala floods. D5-D7 rainfall 500% above normal. NWP models severely underestimated.",
-    "event_type": "monsoon_depression",
-    "mean_bust_probability": 0.61,
-    "mean_confidence": 41.7,
-    "top_drivers": [
-      {"rank": 1, "channel_name": "Seasonal (sin DOY)", "attribution_pct": 39.4, "description": "Active monsoon phase with anomalous moisture flux from Arabian Sea"},
-      {"rank": 2, "channel_name": "Forecast Precipitation", "attribution_pct": 35.1, "description": "Model underestimated orographic enhancement over Western Ghats"},
-      {"rank": 3, "channel_name": "Lead Time", "attribution_pct": 19.2, "description": "5-day lead time during rapidly evolving monsoon depression"}
-    ],
-    "high_bust_regions": [
-      {"name": "Konkan & Goa", "lat_center": 16.5, "lon_center": 73.5, "mean_bust_prob": 0.79, "area_fraction": 0.71},
-      {"name": "Peninsular India", "lat_center": 13.0, "lon_center": 78.0, "mean_bust_prob": 0.58, "area_fraction": 0.44}
-    ]
-  },
-  {
-    "event_name": "North India Heat Wave May 2022",
-    "request_date": "2022-05-12",
-    "lead_day": 5,
-    "variable": "temperature",
-    "description": "Unprecedented heat wave. Tmax exceeded 47C in Rajasthan. NWP underestimated by 2-4C.",
-    "event_type": "heat_wave",
-    "mean_bust_probability": 0.54,
-    "mean_confidence": 49.3,
-    "top_drivers": [
-      {"rank": 1, "channel_name": "Latitude (normalised)", "attribution_pct": 41.2, "description": "Northwest India anticyclonic subsidence pattern at high latitudes"},
-      {"rank": 2, "channel_name": "Seasonal (cos DOY)", "attribution_pct": 28.6, "description": "Pre-monsoon dry season with soil moisture feedback"},
-      {"rank": 3, "channel_name": "Forecast Precipitation", "attribution_pct": 22.1, "description": "Dry conditions amplifying land-surface temperature error"}
-    ],
-    "high_bust_regions": [
-      {"name": "NW India", "lat_center": 29.0, "lon_center": 74.0, "mean_bust_prob": 0.77, "area_fraction": 0.68},
-      {"name": "Vidarbha", "lat_center": 20.5, "lon_center": 78.5, "mean_bust_prob": 0.52, "area_fraction": 0.39}
-    ]
-  },
-  {
-    "event_name": "Cyclone Fani 2019",
-    "request_date": "2019-04-28",
-    "lead_day": 3,
-    "variable": "rainfall",
-    "description": "Extremely Severe Cyclone Fani. Rapid intensification event. Landfall Puri, Odisha.",
-    "event_type": "cyclone",
-    "mean_bust_probability": 0.59,
-    "mean_confidence": 43.6,
-    "top_drivers": [
-      {"rank": 1, "channel_name": "Forecast Precipitation", "attribution_pct": 51.3, "description": "Rapid intensification caused large precipitation forecast error"},
-      {"rank": 2, "channel_name": "Lead Time", "attribution_pct": 25.7, "description": "3-day lead during RI event"},
-      {"rank": 3, "channel_name": "Longitude (normalised)", "attribution_pct": 16.4, "description": "Bay of Bengal track over warm SSTs"}
-    ],
-    "high_bust_regions": [
-      {"name": "Bay of Bengal", "lat_center": 16.0, "lon_center": 87.0, "mean_bust_prob": 0.76, "area_fraction": 0.66},
-      {"name": "Odisha", "lat_center": 20.0, "lon_center": 84.0, "mean_bust_prob": 0.64, "area_fraction": 0.55}
-    ]
-  },
-  {
-    "event_name": "Delhi WD January 2023",
-    "request_date": "2023-01-06",
-    "lead_day": 4,
-    "variable": "rainfall",
-    "description": "Western Disturbance: heavy snowfall J&K, HP. Models underestimated due to Himalayan orography.",
-    "event_type": "western_disturbance",
-    "mean_bust_probability": 0.47,
-    "mean_confidence": 56.1,
-    "top_drivers": [
-      {"rank": 1, "channel_name": "Latitude (normalised)", "attribution_pct": 44.8, "description": "High-latitude Himalayan orographic interaction"},
-      {"rank": 2, "channel_name": "Seasonal (cos DOY)", "attribution_pct": 32.1, "description": "Winter Western Disturbance season"},
-      {"rank": 3, "channel_name": "Forecast Precipitation", "attribution_pct": 17.3, "description": "Model underestimated snowfall over Himalayan slopes"}
-    ],
-    "high_bust_regions": [
-      {"name": "NW India", "lat_center": 33.0, "lon_center": 76.0, "mean_bust_prob": 0.68, "area_fraction": 0.57},
-      {"name": "NE India", "lat_center": 27.0, "lon_center": 93.0, "mean_bust_prob": 0.31, "area_fraction": 0.22}
-    ]
+    "data_source": "illustrative_only",
+    "data_source_reason": "Pre-GEFSv12 (before 2020-09-01). 0.25deg GEFS archived data unavailable. Cannot be run through the real model pipeline. Permanently labeled illustrative_only per Option A.",
+    "mean_bust_probability": null,
+    "mean_confidence": null,
+    "top_drivers": [],
+    "high_bust_regions": [],
+    "grid_latitudes": [],
+    "grid_longitudes": [],
+    "bust_probability_map": [],
+    "error_magnitude_map": [],
+    "confidence_map": [],
+    "from_cache": true
   }
 ]

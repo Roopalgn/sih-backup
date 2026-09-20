@@ -77,11 +77,11 @@ class PredictResponse(BaseModel):
     lead_day: int
     variable: str
 
-    # Grid-level output (GeoJSON-like)
+    # Grid-level output
     grid_latitudes: list[float] = Field(..., description="Latitude values of output grid")
     grid_longitudes: list[float] = Field(..., description="Longitude values of output grid")
-    bust_probability_map: list[list[float]] = Field(..., description="[H x W] bust probability")
-    error_magnitude_map: list[list[float]] = Field(..., description="[H x W] predicted error")
+    bust_probability_map: list[list[float]] = Field(..., description="[H x W] bust probability [0,1]")
+    error_magnitude_map: list[list[float]] = Field(..., description="[H x W] predicted error (mm/day)")
     confidence_map: list[list[float]] = Field(..., description="[H x W] confidence [0-100]")
 
     # Summary statistics
@@ -91,9 +91,21 @@ class PredictResponse(BaseModel):
 
     # Explainability
     top_drivers: list[MeteoDriver]
-    event_type: Optional[str] = None  # cyclone | monsoon_depression | heat_wave | etc.
+    event_type: Optional[str] = None
 
+    # Data provenance — always present, never "live_model" unless model actually ran
+    data_source: str = Field(
+        default="unknown",
+        description=(
+            "'live_model': ForecastBustUNet ran on real forecast data. "
+            "'precomputed_cache': loaded from pre-saved JSON. "
+            "'illustrative_only': hand-authored numbers, NOT model output — label visibly in UI."
+        ),
+    )
+
+    # Legacy field — kept for backward compat with old cached JSONs
     from_cache: bool = False
+
 
 
 class HistoricalEvent(BaseModel):
