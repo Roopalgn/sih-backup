@@ -219,20 +219,25 @@ with st.sidebar:
 
     selected_date = st.date_input(
         "📅 Forecast Init Date", value=default_date,
-        min_value=date(2018, 1, 1), max_value=date(2023, 12, 31),
+        min_value=date(2021, 1, 1), max_value=date(2023, 12, 31),
     )
-    lead_day = st.slider("⏱️ Lead Time (Days)", 1, 10, default_lead,
-                          help="Day 1 = tomorrow · Day 10 = 10 days ahead")
+
+    VALID_LEAD_DAYS = [3, 5, 7, 10]
+    # Guard: if stored event has a lead_day outside trained set, reset to 3
+    default_lead = default_lead if default_lead in VALID_LEAD_DAYS else VALID_LEAD_DAYS[0]
+    lead_day = st.select_slider(
+        "⏱️ Lead Time (Days)",
+        options=VALID_LEAD_DAYS,
+        value=default_lead,
+        help="Model is trained and evaluated only at these 4 lead times.",
+    )
     variable = st.selectbox(
         "🌡️ Target Variable",
-        ["rainfall", "temperature", "z500", "wind850"],
-        format_func=lambda v: {
-            "rainfall":    "🌧️ Daily Rainfall",
-            "temperature": "🌡️ 2m Temperature",
-            "z500":        "🌪️ 500 hPa Geopotential",
-            "wind850":     "💨 850 hPa Winds",
-        }.get(v, v),
+        ["rainfall"],
+        format_func=lambda v: {"rainfall": "🌧️ Daily Rainfall (active)"}.get(v, v),
+        help="Only rainfall is implemented. Temperature/z500/wind850 are future work.",
     )
+
 
     st.divider()
     st.markdown("**🗺️ Display Options**")
@@ -259,6 +264,11 @@ if evt is not None:
     event_label       = evt.get("event_name", "Unknown Event")
     event_desc        = evt.get("description", "")
     data_source       = evt.get("data_source", "unknown")
+    # Extract real 2D grid arrays if present in the cached response
+    real_conf_map  = evt.get("confidence_map")
+    real_bust_map  = evt.get("bust_probability_map")
+    real_lats      = evt.get("grid_latitudes")
+    real_lons      = evt.get("grid_longitudes")
 else:
     # Custom date — try API, otherwise honest illustrative label
     event_type   = "monsoon_depression"
@@ -269,6 +279,10 @@ else:
     mean_conf    = 0.0
     top_drivers  = []
     high_bust_regions = []
+    real_conf_map = None
+    real_bust_map = None
+    real_lats     = None
+    real_lons     = None
 
     if _check_api_online():
         try:
@@ -286,15 +300,38 @@ else:
                 high_bust_regions = api_data.get("high_bust_regions", [])
                 data_source       = api_data.get("data_source", "live_model")
                 event_type        = api_data.get("event_type") or "monsoon_depression"
-            # 503 → stay illustrative_only
+                # Extract real grids from API response
+                real_conf_map  = api_data.get("confidence_map")
+                real_bust_map  = api_data.get("bust_probability_map")
+                real_lats      = api_data.get("grid_latitudes")
+                real_lons      = api_data.get("grid_longitudes")
+            # 503 → stay illustrative_only, grids stay None
         except Exception:
             pass
 
-seed = abs(hash(f"{selected_date}{lead_day}")) % (2 ** 20)
-lats, lons, conf_grid, bust_grid = _generate_grid(
-    max(mean_bust, 0.35), event_type, lead_day, seed
+# ── Grid resolution: use real model output if available, else generate synthetic ──
+has_real_grid = (
+    data_source in ("live_model", "precomputed_cache")
+    and real_conf_map is not None
+    and real_bust_map is not None
+    and len(real_conf_map) > 0
+    and len(real_bust_map) > 0
 )
-lead_days_list, conf_trend, bust_trend = _lead_time_series(event_type, max(mean_bust, 0.35))
+
+if has_real_grid:
+    lats      = real_lats
+    lons      = real_lons
+    conf_grid = real_conf_map
+    bust_grid = real_bust_map
+    # Use the 4 trained lead days for the trend axis when real data is available
+    lead_days_list, conf_trend, bust_trend = _lead_time_series(event_type, mean_bust)
+else:
+    # Explicitly synthetic — only for illustrative_only or missing-data cases
+    seed = abs(hash(f"{selected_date}{lead_day}")) % (2 ** 20)
+    lats, lons, conf_grid, bust_grid = _generate_grid(
+        max(mean_bust, 0.35), event_type, lead_day, seed
+    )
+    lead_days_list, conf_trend, bust_trend = _lead_time_series(event_type, max(mean_bust, 0.35))
 
 # ── Data provenance banner ────────────────────────────────────────────────────
 _data_source_banner(data_source, event_label)
@@ -364,6 +401,13 @@ with tab1:
             st.plotly_chart(fig, use_container_width=True)
             st.caption("_Tip: `pip install streamlit-folium folium` for interactive map with tooltips._")
 
+        # Per-map provenance label — prevents banner/map disagreement
+        st.caption(
+            "📍 **Map source: Live model output** — real GEFS forecast processed by ForecastBustUNet."
+            if has_real_grid else
+            "📍 **Map source: Illustrative pattern** — NOT model output. Generated locally for layout only."
+        )
+
     with col_stat:
         st.markdown("#### Stats")
         st.metric("Mean Confidence", f"{conf_arr.mean():.1f}%")
@@ -410,6 +454,13 @@ with tab2:
             fig_b.update_layout(height=460)
             st.plotly_chart(fig_b, use_container_width=True)
 
+        # Per-map provenance label — matches tab1 pattern
+        st.caption(
+            "📍 **Map source: Live model output** — real GEFS forecast processed by ForecastBustUNet."
+            if has_real_grid else
+            "📍 **Map source: Illustrative pattern** — NOT model output. Generated locally for layout only."
+        )
+
     with col_bstat:
         st.markdown("#### Bust Stats")
         st.metric("Mean Bust Prob",  f"{bust_arr.mean():.1%}")
@@ -417,8 +468,9 @@ with tab2:
         st.metric("High-Risk Cells", f"{(bust_arr > 0.5).mean():.1%}")
         st.divider()
         st.markdown("**Bust Criterion**")
-        st.code("E(x,y,τ) > P90[clim. error]")
-        st.caption("E = |Forecast − Observed|")
+        st.code("E(x,y,τ) > P90[real fcst error]")
+        st.caption("E = |Forecast − Observed| ; P90 from training window")
+
 
 # ── Tab 3: Explainability ──────────────────────────────────────────────────────────
 with tab3:
@@ -450,8 +502,9 @@ with tab3:
 
 # ── Tab 4: Lead-Time Trend ────────────────────────────────────────────────────────
 with tab4:
-    st.markdown("**Forecast Confidence & Bust Probability — Day 1 to Day 10**")
-    st.caption("📊 Regional confidence degradation curves as lead time increases.")
+    st.markdown("**Forecast Confidence & Bust Probability — Days 3, 5, 7, 10**")
+    st.caption("📊 Regional confidence degradation curves across the 4 trained lead times.")
+
 
     try:
         from dashboard.components.lead_time_plot import (
@@ -474,10 +527,10 @@ with tab4:
                       title=f"Confidence Trend: {event_label}")
         st.plotly_chart(fig, use_container_width=True)
 
-# ── Footer ─────────────────────────────────────────────────────────────────────────
+# ── Footer ───────────────────────────────────────────────────────────────────────
 st.divider()
 st.caption(
-    "📡 **AI Forecast Bust Detection** | MoES (NCMRWF) | SIH 2024 — PS #26079 | "
-    "Model: ForecastBustUNet | Data: IMD Gridded Obs × NOAA GEFS | "
-    "Explainability: Integrated Gradients (Captum)"
+    "📡 **AI Forecast Bust Detection** | MoES (NCMRWF) | SIH 2026 — PS #26079 | "
+    "Model: ForecastBustUNet | Data: IMD Gridded Obs × NOAA GEFSv12 | "
+    "Explainability: Integrated Gradients (hand-rolled implementation, not Captum)"
 )

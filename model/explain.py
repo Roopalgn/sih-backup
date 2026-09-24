@@ -1,7 +1,12 @@
 """
 explain.py
 ----------
-Explainability module for ForecastBustUNet using Integrated Gradients (Captum).
+Explainability module for ForecastBustUNet using Integrated Gradients (hand-rolled).
+
+NOTE: This is a manual Riemann-sum implementation of Integrated Gradients.
+It is NOT using the Captum library. The implementation is Captum-compatible
+in terms of the IG formula but has no dependency on captum.
+
 
 Outputs:
   - Per-channel attribution maps [C, H, W] showing which input variable

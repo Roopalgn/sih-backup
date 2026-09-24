@@ -48,11 +48,13 @@ app = FastAPI(
     description=(
         "REST API for NCMRWF AI-Based Forecast Bust Detection System (SIH #26079). "
         "Provides gridded forecast confidence maps and bust probability estimates for "
-        "medium-range weather forecasts over India (Day 1–Day 10)."
+        "medium-range weather forecasts over 4 IMD subdivisions (14–32°N, 68–90°E) "
+        "at lead times of Day 3, 5, 7, and 10."
     ),
     version="1.0.0",
     lifespan=lifespan,
 )
+
 
 # CORS — allow Streamlit dashboard on same machine
 app.add_middleware(

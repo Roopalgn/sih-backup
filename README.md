@@ -7,14 +7,49 @@
 
 ---
 
+## 📌 Scope & Status
+
+> This is a working prototype. All numbers and maps it produces are either (a) real model output or (b) explicitly labelled `illustrative_only`. No silent substitution of fabricated data occurs.
+
+| Dimension | Value |
+|---|---|
+| **Domain** | 14–32°N, 68–90°E — 4 IMD subdivisions: Odisha, Gangetic WB, Konkan & Goa, NW India |
+| **Resolution** | 0.25° × 0.25° (native GEFSv12 grid) |
+| **Forecast source** | NOAA GEFSv12 — control member (c00), available from **2020-09-01 onward** |
+| **Ground truth** | IMD gridded daily rainfall at 0.25° |
+| **Training window** | Jun–Sep 2021 |
+| **Validation window** | Aug 2022 |
+| **Test window** | Jun–Jul + Sep 2022 |
+| **Lead times** | **Day 3, 5, 7, 10 only** — not Day 1–10 |
+| **Variable** | Rainfall only (temperature pipeline not yet implemented) |
+| **Bust definition** | `|GEFS forecast − IMD obs| > P90` where P90 is computed from real forecast errors over the training window |
+| **Explainability** | Hand-rolled Integrated Gradients (manual Riemann sum, **not** using Captum library) |
+
+### What's real
+- ✅ P90 threshold from actual `|forecast − observation|` error distribution
+- ✅ Dual-Head Attention U-Net trained on real paired forecast/obs data
+- ✅ Integrated Gradients driver attribution computed live per prediction
+- ✅ FastAPI and Streamlit dashboard wired together; `data_source` field in every response
+
+### What's illustrative
+- 🟡 Showcase events before model training completes — labelled `data_source: illustrative_only`
+- 🟡 Dashboard maps for `illustrative_only` events — generated locally, not model output (captioned)
+
+### Not yet implemented
+- ❌ Temperature bust detection
+- ❌ Ensemble spread (control member only)
+- ❌ Per-cell P90 (currently pooled across domain)
+
+---
+
 ## 🏆 Expected Outcomes (Problem Statement #26079)
 
 | Output | Implementation |
 |---|---|
-| **Forecast confidence map** | `C(x,y,τ) = 100 × exp(−Ê/σ) × (1 − P̂_bust)` per grid cell, Day 1–10 |
-| **Bust probability** | ForecastBustUNet classification head, Focal Loss, threshold = P90 |
-| **Error-prone area detection** | Spatial bust labels: `E(x,y,τ) > P90[historical error]` |
-| **Explainable output** | Integrated Gradients (Captum) — top meteorological drivers per forecast |
+| **Forecast confidence map** | `C(x,y,τ) = 100 × exp(−Ê/σ) × (1 − P̂_bust)` per grid cell, Day 3/5/7/10 |
+| **Bust probability** | ForecastBustUNet classification head, Focal Loss, threshold = P90 of real forecast error |
+| **Error-prone area detection** | Spatial bust labels: `E(x,y,τ) > P90[real forecast error, training window only]` |
+| **Explainable output** | Integrated Gradients (hand-rolled) — top 3 meteorological drivers per prediction |
 | **Prototype dashboard / API** | Streamlit (4-tab dashboard) + FastAPI REST API with Swagger UI |
 
 ---
@@ -22,18 +57,18 @@
 ## 🌟 Architecture
 
 ```
-IMD Gridded Obs (ground truth)  +  NOAA GEFS Forecasts (input)
-         ↓  xarray / imdlib / s3fs
+IMD Gridded Obs (ground truth)  +  NOAA GEFSv12 Forecasts (input)
+         ↓  xarray / imdlib / s3fs (byte-range reads)
 Feature Engineering
   • Error E(x,y,τ) = |Forecast_τ − Obs|
-  • Bust label = 1 where E > P90(historical error per cell per lead day)
-  • Coord channels (lat, lon), cyclical DOY encoding, lead-time normalisation
+  • Bust label = 1 where E > P90(real forecast error, training window)
+  • 6 channels: [forecast_precip, lat_norm, lon_norm, lead_norm, sin_doy, cos_doy]
          ↓
-Dual-Head Attention U-Net  (PyTorch)
+Dual-Head Attention U-Net  (PyTorch, in_channels=6)
   ├─ Head A: Error Regression  → Huber loss       → predicted |error| map
   └─ Head B: Bust Classification → Focal Loss (γ=2) → bust probability [0,1]
          ↓
-Integrated Gradients (Captum) → Top meteorological drivers per prediction
+Integrated Gradients (hand-rolled, n_steps=25) → Top 3 drivers per prediction
          ↓
   FastAPI REST API  ←→  Streamlit Dashboard (4 tabs)
 ```
@@ -42,61 +77,63 @@ Integrated Gradients (Captum) → Top meteorological drivers per prediction
 
 ## 🚀 Quick Start
 
-### 1. Setup Environment
+### 1. Install Dependencies
 ```bash
-conda env create -f environment.yml
-conda activate forecast-bust
+pip install streamlit plotly fastapi uvicorn pydantic pyyaml requests folium streamlit-folium
 ```
 
-### 2. Download Data
+### 2. Download Data (validate with 5-date stub first)
 ```bash
-# IMD gridded observations (0.25° daily rainfall, requires no credentials)
-python data/download_imd.py --variables rain tmax tmin
+# Validate pipeline with 5 real dates before full-season download
+python data/download_gefs_stub.py
 
-# NOAA GEFS forecast archives from AWS S3 (free, no credentials)
-python data/download_gefs.py --method auto --start 2018-01-01 --end 2023-12-31
+# Full monsoon season download (Jun–Sep 2021 + Jun–Sep 2022)
+python data/download_gefs.py --config config/settings.yaml
 
-# ERA5 reanalysis — register free at https://cds.climate.copernicus.eu/
-# then save ~/.cdsapirc with your UID:key
-python data/download_era5.py --type both
+# IMD observations
+python data/download_imd.py --variables rain
 ```
+
+> **Note:** NOAA GEFS 0.25° data (GEFSv12) is only available from **2020-09-01** onward.
+> The downloader uses AWS S3 with GRIB2 index byte-range reads — no full-globe downloads.
+> NOMADS (`nomads.ncep.noaa.gov`) only serves recent real-time data, not 2021 archives.
 
 ### 3. Build ML Dataset
 ```bash
-python data/preprocess.py --variables rain
-python data/event_catalog.py     # exports dashboard/precomputed/event_catalog.json
+# Full pipeline (real P90 from real forecast error)
+python data/preprocess.py --config config/settings.yaml
+
+# Quick 5-date stub validation
+python data/preprocess.py --stub
 ```
 
 ### 4. Train Model
 ```bash
-# Full training (GPU recommended)
+# Full training (~10 epochs, ~15-30 min on CPU)
 python model/train.py --config config/settings.yaml
-
-# 5-epoch quick test (CPU, 50 samples)
-python model/train.py --fast
 ```
 
-### 5. Evaluate
+### 5. Start API + Dashboard
 ```bash
-python model/evaluate.py --split test --checkpoint checkpoints/best_model.pt
-# Outputs: results/metrics_by_lead_test.csv, results/metrics_by_subdivision_test.csv
-```
+# Start API
+uvicorn api.main:app --port 8000 &
 
-### 6. Run Dashboard (works offline with precomputed cache)
-```bash
-streamlit run dashboard/app.py
+# Generate real showcase events from trained model
+python dashboard/generate_showcase_events.py
+
+# Start dashboard
+streamlit run dashboard/app.py --server.port 8501
 # Opens at: http://localhost:8501
-```
-
-### 7. Run API
-```bash
-uvicorn api.main:app --reload --port 8000
 # Swagger UI: http://localhost:8000/docs
 ```
 
-### 8. Run Tests
+### 6. Run Tests
 ```bash
-python -m pytest tests/ -v
+# Unit tests
+python -m pytest tests/test_pipeline.py tests/test_model.py -v
+
+# Integration tests (require preprocessed data + trained checkpoint)
+python -m pytest tests/test_integration_end_to_end.py -v
 ```
 
 ---
@@ -106,9 +143,7 @@ python -m pytest tests/ -v
 | Dataset | Source | Variables | Access |
 |---|---|---|---|
 | IMD Gridded Rainfall (0.25°) | IMD Pune via `imdlib` | Daily rainfall (mm/day) | `pip install imdlib` |
-| IMD Gridded Temp (0.5°) | IMD Pune via `imdlib` | Daily Tmax, Tmin (°C) | `pip install imdlib` |
-| NOAA GEFS (0.25°) | AWS S3 `noaa-gefs-pds` | Precip, T2m, Z500, U/V850 | Free, anonymous |
-| ERA5 Reanalysis | Copernicus CDS | Z500, T850, CAPE, MSLP | Free registration |
+| NOAA GEFSv12 (0.25°) | AWS S3 `noaa-gefs-pds` (2020-09-01+) | Precip (APCP), T2m | Free, anonymous S3 |
 
 ---
 
@@ -118,17 +153,19 @@ python -m pytest tests/ -v
 
 | Component | Detail |
 |---|---|
-| Encoder | 4-level Conv (64→128→256→512), BatchNorm + ReLU, MaxPool2d |
+| Input channels | 6: [forecast_precip, lat_norm, lon_norm, lead_norm, sin_doy, cos_doy] |
+| Encoder | 4-level Conv (32→64→128→256), BatchNorm + ReLU, MaxPool2d |
 | Attention | Oktay et al. 2018 attention gates on all skip connections |
-| Bottleneck | DoubleConv(1024) with Dropout |
 | Decoder | ConvTranspose2d + skip-connected DoubleConv |
 | Head A | Conv → ReLU → Conv → **Softplus** → error magnitude ≥ 0 |
 | Head B | Conv → ReLU → Conv → **Sigmoid** → bust probability ∈ [0, 1] |
 | Loss | `α × Huber(Head A) + (1−α) × FocalLoss(Head B, γ=2)` |
-| Explainability | Integrated Gradients (`captum.attr.IntegratedGradients`) |
+| Explainability | Hand-rolled Integrated Gradients (Riemann sum, n_steps=25 — **not** using Captum) |
 
 **Bust Label Definition:**
-$$\text{Bust}(x,y,\tau) = \mathbb{1}\bigl(|F_\tau(x,y) - O(x,y)| > \mathcal{P}_{90}(x,y,\tau)\bigr)$$
+$$\text{Bust}(x,y,\tau) = \mathbb{1}\bigl(|F_\tau(x,y) - O(x,y)| > \mathcal{P}_{90}(\tau)\bigr)$$
+
+where $\mathcal{P}_{90}(\tau)$ is the 90th percentile of real `|forecast − observation|` errors pooled across the training domain for lead day $\tau$. Computed from training window only (no data leakage).
 
 **Confidence Indicator:**
 $$C(x,y,\tau) = 100 \times \exp\!\left(-\frac{\hat{E}(x,y)}{\sigma_{\text{clim}}}\right) \times (1 - \hat{P}_{\text{bust}}(x,y))$$
@@ -140,31 +177,42 @@ $$C(x,y,\tau) = 100 \times \exp\!\left(-\frac{\hat{E}(x,y)}{\sigma_{\text{clim}}
 | Endpoint | Method | Description |
 |---|---|---|
 | `/` | GET | Health check |
-| `/api/v1/info` | GET | Model and dataset info |
-| `/api/v1/predict` | POST | Bust probability + confidence maps |
-| `/api/v1/historical` | GET | Historical bust event catalog |
+| `/api/v1/info` | GET | Model scope, bust definition, lead times, explainability method |
+| `/api/v1/predict` | POST | Bust probability + confidence maps + IG driver attribution |
+| `/api/v1/historical` | GET | Reference catalog of curated historical events (metadata only, not model output) |
 
-**POST /api/v1/predict** example:
+> **Note on `/api/v1/historical`:** This endpoint returns factual event metadata (names, dates, severity) from a curated reference catalog. It is **not** model-generated output. Use `POST /api/v1/predict` for live model predictions.
+
+**POST /api/v1/predict** example (in-training-window date):
 ```json
 {
-  "date": "2020-05-16",
-  "lead_day": 4,
+  "date": "2021-08-10",
+  "lead_day": 5,
   "variable": "rainfall",
   "use_cache": true
 }
 ```
 
+Every response includes `"data_source"`:
+- `"live_model"` — ForecastBustUNet ran on real GEFS data
+- `"precomputed_cache"` — loaded from pre-saved JSON
+- `"illustrative_only"` — placeholder, NOT model output (visibly labelled in UI)
+
 ---
 
 ## 🌊 Showcase Demo Events
 
-| Event | Date | Type | Key Finding |
-|---|---|---|---|
-| **Cyclone Amphan** | May 2020 | Cyclone | D3–D5 bust over Bay of Bengal / Odisha |
-| **Kerala Floods** | Aug 2018 | Monsoon Depression | D5–D7 severe underestimation over Western Ghats |
-| **NI Heat Wave** | May 2022 | Heat Wave | D4–D7 Tmax underestimation of 2–4°C over NW India |
-| **Cyclone Fani** | May 2019 | Cyclone | RI event caused D3 bust over Bay of Bengal |
-| **Delhi WD Snowfall** | Jan 2023 | Western Disturbance | Himalayan orographic bust J&K / HP |
+Current contents of [`dashboard/precomputed/events.json`](file:///c:/Users/roopa/OneDrive/Desktop/hackathon/sih-backup/dashboard/precomputed/events.json):
+
+| Event | Date | Lead | data_source | Note |
+|---|---|---|---|---|
+| Monsoon Onset 2021 | 2021-06-15 | Day 5 | `illustrative_only` | Replace by running `generate_showcase_events.py` after training |
+| Peak Monsoon 2021 | 2021-08-10 | Day 5 | `illustrative_only` | Replace by running `generate_showcase_events.py` after training |
+| Monsoon Break 2021 | 2021-09-15 | Day 7 | `illustrative_only` | Replace by running `generate_showcase_events.py` after training |
+| Monsoon Onset 2022 | 2022-06-25 | Day 3 | `illustrative_only` | Replace by running `generate_showcase_events.py` after training |
+| Cyclone Amphan OOD | 2020-05-16 | Day 4 | `illustrative_only` | Pre-GEFSv12 era — permanently illustrative |
+
+> Amphan (May 2020) predates the GEFSv12 cutoff (2020-09-01) and cannot be run through the real pipeline. It is permanently labelled `illustrative_only`. The other 4 events will flip to `live_model` once training completes and `generate_showcase_events.py` is run.
 
 ---
 
@@ -173,43 +221,60 @@ $$C(x,y,\tau) = 100 \times \exp\!\left(-\frac{\hat{E}(x,y)}{\sigma_{\text{clim}}
 ```
 sih-backup/
 ├── config/
-│   └── settings.yaml              ← All configuration (domain, thresholds, model)
+│   └── settings.yaml              ← All configuration (domain=14-32N/68-90E, lead=[3,5,7,10])
 ├── data/
-│   ├── config_loader.py           ← YAML config utility
-│   ├── download_imd.py            ← IMD rain/temp via imdlib
-│   ├── download_gefs.py           ← GEFS from AWS S3 + Open-Meteo fallback
-│   ├── download_era5.py           ← ERA5 via cdsapi
-│   ├── preprocess.py              ← Feature engineering, P90 bust labels, Zarr output
-│   └── event_catalog.py           ← 9 curated Indian weather events
+│   ├── config_loader.py           ← YAML config + GEFSv12 date guard + channel count validation
+│   ├── download_imd.py            ← IMD rain via imdlib
+│   ├── download_gefs.py           ← GEFSv12 from AWS S3 (byte-range reads, not full globe)
+│   ├── download_gefs_stub.py      ← 5-date stub downloader for pipeline validation
+│   ├── download_era5.py           ← ERA5 via cdsapi (optional, not used in core pipeline)
+│   ├── preprocess.py              ← Real P90 from forecast error, 6-channel features, Zarr output
+│   └── event_catalog.py           ← 9 curated Indian weather events (reference metadata)
 ├── model/
-│   ├── architecture.py            ← ForecastBustUNet (Dual-Head Attention U-Net)
-│   ├── loss.py                    ← MultiTaskBustLoss (Huber + Focal)
-│   ├── dataset.py                 ← PyTorch BustDataset (Zarr)
+│   ├── architecture.py            ← ForecastBustUNet (Dual-Head Attention U-Net, in_channels=6)
+│   ├── loss.py                    ← MultiTaskBustLoss (Huber + Focal γ=2)
+│   ├── dataset.py                 ← PyTorch BustDataset (auto-detects per-split Zarr files)
 │   ├── train.py                   ← Training loop (AMP, early stopping, AUC checkpoint)
 │   ├── evaluate.py                ← ROC-AUC, CSI, FAR by lead day and subdivision
-│   └── explain.py                 ← Integrated Gradients (Captum)
+│   └── explain.py                 ← Integrated Gradients (hand-rolled, not Captum)
 ├── api/
-│   ├── main.py                    ← FastAPI app (lifespan model load, CORS)
-│   ├── schemas.py                 ← Pydantic request/response schemas
+│   ├── main.py                    ← FastAPI app (lifespan model load, CORS, /api/v1/info)
+│   ├── schemas.py                 ← Pydantic schemas with data_source field
 │   └── routes/
-│       ├── predict.py             ← POST /api/v1/predict
-│       └── history.py             ← GET /api/v1/historical
+│       ├── predict.py             ← POST /api/v1/predict (no synthetic fallback; 503 if unavailable)
+│       └── history.py             ← GET /api/v1/historical (reference_catalog, not model output)
 ├── dashboard/
-│   ├── app.py                     ← Streamlit dashboard (4 tabs, offline-ready)
+│   ├── app.py                     ← Streamlit dashboard (real grid from API; illustrative pattern only if no data)
+│   ├── generate_showcase_events.py ← Calls live API to replace illustrative events with real model output
 │   ├── components/
 │   │   ├── map_widget.py          ← Folium confidence/bust map
-│   │   ├── lead_time_plot.py      ← Plotly Day 1→10 trend charts
+│   │   ├── lead_time_plot.py      ← Plotly Day 3/5/7/10 trend charts
 │   │   └── explain_panel.py       ← Attribution bar chart + operational guidance
 │   └── precomputed/
-│       └── events.json            ← 5 showcase event predictions (demo cache)
+│       └── events.json            ← Showcase events (illustrative_only until generate_showcase_events.py run)
 ├── tests/
 │   ├── test_pipeline.py           ← Data pipeline unit tests
-│   └── test_model.py              ← Model / loss / confidence unit tests
-├── environment.yml                ← Conda environment
+│   ├── test_model.py              ← Model / loss / confidence unit tests
+│   └── test_integration_end_to_end.py ← Full pipeline integration test (requires data + checkpoint)
+├── environment.yml                ← Conda environment (reference)
 └── README.md
+
 ```
 
 ---
 
-*Built for Smart India Hackathon 2024 | Problem Statement #26079*
+## ✅ Honesty Framework
+
+Every API response and dashboard panel carries a `data_source` field:
+
+| Value | Meaning | UI treatment |
+|---|---|---|
+| `live_model` | ForecastBustUNet ran on real GEFS data | ✅ green banner + "Live model output" map caption |
+| `precomputed_cache` | Loaded from pre-saved real-model JSON | 📦 blue banner + "Live model output" map caption |
+| `illustrative_only` | Placeholder, NOT model output | ⚠️ orange banner + "Illustrative pattern" map caption |
+| `reference_catalog` | `/api/v1/historical` metadata only | Note in response body |
+
+---
+
+*Built for Smart India Hackathon 2026 | Problem Statement #26079*
 *Organization: Ministry of Earth Sciences (MoES) — NCMRWF*

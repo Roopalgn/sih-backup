@@ -73,4 +73,11 @@ async def get_historical(
         total_events=len(events),
         events=[HistoricalEvent(**e) for e in events],
         event_types=sorted(event_types),
+        data_source="reference_catalog",
+        catalog_note=(
+            "This is a curated reference catalog of real historical Indian weather events — "
+            "event names, dates, severity, and descriptions are factual metadata. "
+            "These are NOT model-generated predictions. "
+            "For model-derived bust probability output, use POST /api/v1/predict."
+        ),
     )

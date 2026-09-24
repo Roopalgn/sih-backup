@@ -127,3 +127,11 @@ class HistoricalResponse(BaseModel):
     total_events: int
     events: list[HistoricalEvent]
     event_types: list[str]
+    data_source: str = Field(
+        default="reference_catalog",
+        description="Always 'reference_catalog' — this endpoint returns metadata, not model predictions.",
+    )
+    catalog_note: Optional[str] = Field(
+        default=None,
+        description="Human-readable note clarifying this is curated metadata, not model output.",
+    )
