@@ -64,8 +64,20 @@ class AttentionGate(nn.Module):
     def forward(self, g: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         g1 = self.w_g(g)
         x1 = self.w_x(x)
+        # Align spatial dims: after odd-sized inputs and repeated pooling,
+        # g1 (from decoder) may be 1 pixel smaller than x1 (encoder skip).
+        # Upsample g1 to x1's size so element-wise add is valid.
+        if g1.shape[2:] != x1.shape[2:]:
+            g1 = torch.nn.functional.interpolate(
+                g1, size=x1.shape[2:], mode="bilinear", align_corners=False
+            )
         psi = self.relu(g1 + x1)
         psi = self.psi(psi)
+        # Align psi back to x's spatial size for element-wise multiply
+        if psi.shape[2:] != x.shape[2:]:
+            psi = torch.nn.functional.interpolate(
+                psi, size=x.shape[2:], mode="bilinear", align_corners=False
+            )
         return x * psi
 
 
@@ -106,10 +118,13 @@ class ForecastBustUNet(nn.Module):
         self.bottleneck = DoubleConv(c4, c4 * 2, dropout=dropout)
 
         # ── Attention Gates (skip connections) ────────────────
-        self.att4 = AttentionGate(f_g=c4 * 2, f_l=c4, f_int=c4 // 2)
-        self.att3 = AttentionGate(f_g=c4, f_l=c3, f_int=c3 // 2)
-        self.att2 = AttentionGate(f_g=c3, f_l=c2, f_int=c2 // 2)
-        self.att1 = AttentionGate(f_g=c2, f_l=c1, f_int=c1 // 2)
+        # g = decoder output AFTER upsampling (so c4, c3, c2, c1 channels)
+        # x = encoder skip connection at matching resolution
+        self.att4 = AttentionGate(f_g=c4,   f_l=c4, f_int=c4 // 2)
+        self.att3 = AttentionGate(f_g=c3,   f_l=c3, f_int=c3 // 2)
+        self.att2 = AttentionGate(f_g=c2,   f_l=c2, f_int=c2 // 2)
+        self.att1 = AttentionGate(f_g=c1,   f_l=c1, f_int=c1 // 2)
+
 
         # ── Decoder ─────────────────────────────────────────
         self.up4 = nn.ConvTranspose2d(c4 * 2, c4, kernel_size=2, stride=2)
@@ -156,43 +171,52 @@ class ForecastBustUNet(nn.Module):
             x: Input tensor [B, in_channels, H, W]
 
         Returns:
-            error_map: Predicted error magnitude [B, 1, H, W]
-            bust_prob: Bust probability map [B, 1, H, W]
+            error_map: Predicted error magnitude [B, 1, H, W] (same H,W as input)
+            bust_prob: Bust probability map [B, 1, H, W] (same H,W as input)
         """
+        H_in, W_in = x.shape[2], x.shape[3]   # remember original spatial size
+
         # Encoder
-        e1 = self.enc1(x)                    # [B, 64, H, W]
-        e2 = self.enc2(self.pool1(e1))       # [B, 128, H/2, W/2]
-        e3 = self.enc3(self.pool2(e2))       # [B, 256, H/4, W/4]
-        e4 = self.enc4(self.pool3(e3))       # [B, 512, H/8, W/8]
+        e1 = self.enc1(x)                    # [B, c1, H, W]
+        e2 = self.enc2(self.pool1(e1))       # [B, c2, H/2, W/2]
+        e3 = self.enc3(self.pool2(e2))       # [B, c3, H/4, W/4]
+        e4 = self.enc4(self.pool3(e3))       # [B, c4, H/8, W/8]
 
         # Bottleneck
-        b = self.bottleneck(self.pool4(e4))  # [B, 1024, H/16, W/16]
+        b = self.bottleneck(self.pool4(e4))  # [B, c4*2, H/16, W/16]
 
         # Decoder with attention gates
-        d4 = self.up4(b)                              # [B, 512, H/8, W/8]
+        # NOTE: _pad_and_cat pads the decoder tensor up to match the encoder skip.
+        # For odd H or W, this adds 1 pixel — the final crop below corrects it.
+        d4 = self.up4(b)
         e4_att = self.att4(g=d4, x=e4)
         d4 = self._pad_and_cat(d4, e4_att)
         d4 = self.dec4(d4)
 
-        d3 = self.up3(d4)                             # [B, 256, H/4, W/4]
+        d3 = self.up3(d4)
         e3_att = self.att3(g=d3, x=e3)
         d3 = self._pad_and_cat(d3, e3_att)
         d3 = self.dec3(d3)
 
-        d2 = self.up2(d3)                             # [B, 128, H/2, W/2]
+        d2 = self.up2(d3)
         e2_att = self.att2(g=d2, x=e2)
         d2 = self._pad_and_cat(d2, e2_att)
         d2 = self.dec2(d2)
 
-        d1 = self.up1(d2)                             # [B, 64, H, W]
+        d1 = self.up1(d2)
         e1_att = self.att1(g=d1, x=e1)
         d1 = self._pad_and_cat(d1, e1_att)
         d1 = self.dec1(d1)
 
-        error_map = self.head_error(d1)   # [B, 1, H, W]
-        bust_prob = self.head_bust(d1)    # [B, 1, H, W]
+        error_map = self.head_error(d1)   # [B, 1, H', W']
+        bust_prob = self.head_bust(d1)    # [B, 1, H', W']
+
+        # Crop to original input spatial size (handles odd H/W padding artefacts)
+        error_map = error_map[:, :, :H_in, :W_in]
+        bust_prob = bust_prob[:, :, :H_in, :W_in]
 
         return error_map, bust_prob
+
 
     @staticmethod
     def _pad_and_cat(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:

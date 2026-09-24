@@ -21,6 +21,8 @@ data:
   lead_days: [3, 5, 7, 10]          # 4 lead times only
   gefs_min_date: "2020-09-01"       # GEFSv12 cutoff — error raised if earlier
   gefs_bucket: "noaa-gefs-pds"      # AWS S3 open data
+  imd_start: 2021                   # IMD obs download start year
+  imd_end: 2022                     # IMD obs download end year
 
 # Paths
 paths:

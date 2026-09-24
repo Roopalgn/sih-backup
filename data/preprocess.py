@@ -180,13 +180,30 @@ def compute_p90_from_forecast_error(
                 if fcast_vals.ndim > 2:
                     fcast_vals = fcast_vals[0]
 
+                # ── Units conversion (mirrors sample assembly) ───────────────
+                # GEFSv12 `tp` is in METRES; IMD rain is in mm.
+                # If max value < 2.0, assume metres and convert to mm.
+                if float(np.nanmax(fcast_vals)) < 2.0 and precip_var == "tp":
+                    fcast_vals = fcast_vals * 1000.0  # m → mm
+
                 # Compute absolute error and accumulate
-                error_vals = np.abs(fcast_vals[:H, :W] - obs_day[:H, :W])
-                errors_flat.extend(error_vals.flatten().tolist())
+                # Use nanpercentile-safe values: mask NaN/inf and physical outliers
+                obs_clip  = obs_day[:H, :W].copy()
+                fcast_clip = fcast_vals[:H, :W].copy()
+                error_vals = np.abs(fcast_clip - obs_clip)
+                # Keep only finite, non-negative, physically plausible values
+                valid_mask = (
+                    np.isfinite(error_vals)
+                    & np.isfinite(obs_clip)
+                    & (obs_clip >= 0)
+                    & (error_vals < 500)   # sanity cap: 500 mm/day max error
+                )
+                errors_flat.extend(error_vals[valid_mask].flatten().tolist())
                 gefs_ds.close()
 
             except Exception as e:
                 continue
+
 
         # Compute P90 from collected real errors
         if len(errors_flat) >= min_samples:
@@ -280,9 +297,26 @@ def assemble_dataset(
                     fcast_vals = fcast_vals[0]
                 fcast_vals = fcast_vals[:H, :W]
 
-                error = np.abs(fcast_vals - obs_day[:H, :W])
+                # ── Units conversion ────────────────────────────────────────
+                # GEFSv12 `tp` is total accumulated precipitation in METRES.
+                # IMD rain is in mm/day. Convert GEFS → mm before computing error.
+                # Heuristic: if max value < 2.0 assume metres, multiply by 1000.
+                if float(np.nanmax(fcast_vals)) < 2.0 and precip_var == "tp":
+                    fcast_vals = fcast_vals * 1000.0   # m → mm
+
+
+                # ── NaN/missing-value mask ──────────────────────────────────
+                # IMD uses NaN or negative values for missing grid cells (sea).
+                # Replace missing obs with 0 so errors are finite and bust=0 there.
+                obs_day_clean = obs_day[:H, :W].copy()
+                missing = ~np.isfinite(obs_day_clean) | (obs_day_clean < 0)
+                obs_day_clean[missing] = 0.0
+                fcast_vals[missing] = 0.0   # treat missing-obs cells as no-error
+
+                error = np.abs(fcast_vals - obs_day_clean)
                 p90   = p90_maps[lead_day]
                 bust  = (error > p90).astype(np.float32)
+                bust[missing] = 0.0          # no bust label for missing-obs cells
 
                 # lead_day normalised: [3→0.2, 5→0.4, 7→0.6, 10→0.9] relative to Day 10
                 lead_norm = (lead_day - 1) / 9.0
@@ -298,6 +332,7 @@ def assemble_dataset(
                 feature_list.append(feature)
                 error_list.append(error[np.newaxis])      # [1, H, W]
                 bust_list.append(bust[np.newaxis])         # [1, H, W]
+
                 date_out.append(date)
                 lead_out.append(lead_day)
                 gefs_ds.close()
@@ -349,12 +384,22 @@ def run_preprocessing(cfg: dict, stub_mode: bool = False) -> None:
 
     # ── Load IMD observations ──────────────────────────────────────────────────
     print("[Preprocess] Loading IMD rainfall observations...")
-    obs_files = sorted((raw_dir / "imd_rain").glob("*.nc"))
+    # download_imd.py saves converted NetCDF as:
+    #   data/processed/imd_rain_YYYY.nc  (from convert_to_netcdf)
+    # Raw binary files go to data/raw/imd_rain/ (imdlib format, not NetCDF)
+    # Search both locations so the pipeline works regardless of layout.
+    obs_files = (
+        sorted((raw_dir / "imd_rain").glob("*.nc"))           # legacy path
+        or sorted(processed_dir.glob("imd_rain_*.nc"))        # download_imd.py output
+    )
     if not obs_files:
         raise FileNotFoundError(
-            f"No IMD rain NetCDF files found in {raw_dir / 'imd_rain'}. "
+            f"No IMD rain NetCDF files found in:\n"
+            f"  {raw_dir / 'imd_rain'}/*.nc\n"
+            f"  {processed_dir}/imd_rain_*.nc\n"
             f"Run: python data/download_imd.py --variables rain"
         )
+    print(f"[Preprocess] Found {len(obs_files)} IMD obs files: {[f.name for f in obs_files]}")
 
     obs_ds = xr.open_mfdataset(obs_files, combine="by_coords", engine="netcdf4")
     for old, new in [("lat", "latitude"), ("lon", "longitude")]:
@@ -374,6 +419,7 @@ def run_preprocessing(cfg: dict, stub_mode: bool = False) -> None:
     lat_norm, lon_norm = add_coord_channels(obs_ds)
     print(f"[Preprocess] Observations: shape=[{H}, {W}] | "
           f"lat=[{lats[0]:.2f}, {lats[-1]:.2f}] lon=[{lons[0]:.2f}, {lons[-1]:.2f}]")
+
 
     # ── Build date lists ──────────────────────────────────────────────────────
     if stub_mode:
@@ -453,11 +499,17 @@ def run_preprocessing(cfg: dict, stub_mode: bool = False) -> None:
 
         # Save as Zarr
         zarr_path = processed_dir / f"dataset_{split_name}.zarr"
+        # features: [N, 6, H, W] — 6 channels
+        # error_map / bust_map: [N, 1, H, W] → squeeze to [N, H, W]
+        # Using distinct dim sizes avoids xarray "conflicting sizes for dimension 'channel'" error
         out_ds = xr.Dataset(
             {
-                "features":  (["sample", "channel", "latitude", "longitude"], features_arr),
-                "error_map": (["sample", "channel", "latitude", "longitude"], errors_arr),
-                "bust_map":  (["sample", "channel", "latitude", "longitude"], busts_arr),
+                "features":  (["sample", "channel", "latitude", "longitude"],
+                               features_arr.astype(np.float32)),
+                "error_map": (["sample", "latitude", "longitude"],
+                               errors_arr[:, 0].astype(np.float32)),
+                "bust_map":  (["sample", "latitude", "longitude"],
+                               busts_arr[:, 0].astype(np.float32)),
             },
             coords={"latitude": lats, "longitude": lons},
             attrs={
@@ -478,6 +530,7 @@ def run_preprocessing(cfg: dict, stub_mode: bool = False) -> None:
         out_ds["lead_day"]  = xr.DataArray(lead_days_out, dims=["sample"])
         out_ds.to_zarr(zarr_path, mode="w")
         print(f"[Preprocess] Saved: {zarr_path}")
+
 
     # ── Save P90 threshold maps ────────────────────────────────────────────────
     p90_arr = np.stack([p90_maps[d] for d in lead_days], axis=0)  # [L, H, W]

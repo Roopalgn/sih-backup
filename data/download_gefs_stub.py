@@ -54,8 +54,9 @@ def main():
     for date in STUB_DATES:
         print(f"\n[STUB] === {date.isoformat()} ===")
         n = fetch_one_day(date, lead_hours, output_dir, domain)
-        print(f"[STUB]   → {n}/{len(lead_hours)} files saved")
+        print(f"[STUB]   -> {n}/{len(lead_hours)} files saved")
         total += n
+
 
     print(f"\n[STUB] Done. {total} files saved to {output_dir}/")
     print("[STUB] Next step: python data/preprocess.py --stub")

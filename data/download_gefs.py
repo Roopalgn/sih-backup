@@ -136,12 +136,20 @@ def _grib_bytes_to_xarray(grib_bytes: bytes) -> Optional[xr.Dataset]:
             with tempfile.NamedTemporaryFile(suffix=".grib2", delete=False) as tf:
                 tf.write(grib_bytes)
                 tmp_path = tf.name
+            # IMPORTANT: load all data into memory before deleting the temp file.
+            # xarray opens lazily by default — deleting first causes FileNotFoundError.
             ds = xr.open_dataset(tmp_path, engine="cfgrib")
+            ds.load()       # force eager load while file still exists
             os.unlink(tmp_path)
             return ds
         except Exception as e2:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
             print(f"[GEFS] cfgrib decode failed: {e2}")
             return None
+
 
 
 def fetch_one_day(
@@ -224,7 +232,14 @@ def fetch_one_day(
                 if lat_coord is None or lon_coord is None:
                     continue
 
-                # Clip to India domain
+                # Clip to India domain.
+                # GEFSv12 GRIB2 stores latitudes DESCENDING (90 → -90).
+                # xarray slice() requires ascending order, so we sort first.
+                lat_vals = ds[lat_coord].values
+                if len(lat_vals) > 1 and lat_vals[0] > lat_vals[-1]:
+                    # Descending — sort so slice works correctly
+                    ds = ds.sortby(lat_coord)
+
                 ds_clipped = ds.sel(
                     {lat_coord: slice(lat_min, lat_max),
                      lon_coord: slice(lon_min, lon_max)}
@@ -237,6 +252,7 @@ def fetch_one_day(
 
                 for v in ds_clipped.data_vars:
                     merged[v] = ds_clipped[v]
+
 
             if not merged:
                 continue

@@ -114,8 +114,16 @@ class BustDataset(Dataset):
             indices = indices[:max_samples]
 
         self.features   = ds["features"].values[indices]    # [N, C, H, W]
-        self.error_maps = ds["error_map"].values[indices]   # [N, 1, H, W]
-        self.bust_maps  = ds["bust_map"].values[indices]    # [N, 1, H, W]
+
+        # Support both old [N, 1, H, W] and new squeezed [N, H, W] zarr layout.
+        # Always produce [N, 1, H, W] for model compatibility.
+        em = ds["error_map"].values[indices]
+        bm = ds["bust_map"].values[indices]
+        if em.ndim == 3:          # new squeezed layout [N, H, W]
+            em = em[:, np.newaxis]
+            bm = bm[:, np.newaxis]
+        self.error_maps = em      # [N, 1, H, W]
+        self.bust_maps  = bm      # [N, 1, H, W]
         self.n_samples  = len(indices)
 
         if "init_date" in ds:
@@ -132,6 +140,7 @@ class BustDataset(Dataset):
             f"[Dataset] {split}: {self.n_samples} samples | "
             f"shape={self.features.shape[1:]} | bust_rate={bust_rate:.3f}"
         )
+
 
     def __len__(self) -> int:
         return self.n_samples
