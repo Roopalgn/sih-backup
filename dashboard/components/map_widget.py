@@ -60,6 +60,7 @@ def create_confidence_map(
     title: str = "Forecast Confidence Map",
     mode: str = "confidence",
     subsample: int = 4,
+    data_source: str = "",
 ):
     """
     Create an interactive Folium map with confidence/bust probability overlay.
@@ -73,6 +74,7 @@ def create_confidence_map(
         title: Map title
         mode: 'confidence' or 'bust'
         subsample: Draw every Nth grid point (lower = more detail, slower)
+        data_source: Provenance indicator ('live_model', 'precomputed_cache', 'illustrative_only')
 
     Returns:
         Folium Map object (or None if folium not installed)
@@ -101,6 +103,33 @@ def create_confidence_map(
         {title}
     </div>"""
     m.get_root().html.add_child(folium.Element(title_html))
+
+    # Per-map provenance badge directly on the map figure
+    if data_source:
+        if data_source == "live_model":
+            badge_bg = "rgba(230, 244, 234, 0.95)"
+            badge_color = "#137333"
+            badge_border = "#ceead6"
+            badge_text = "📍 Map source: Live model output (ForecastBustUNet)"
+        elif data_source == "precomputed_cache":
+            badge_bg = "rgba(232, 240, 254, 0.95)"
+            badge_color = "#1a73e8"
+            badge_border = "#d2e3fc"
+            badge_text = "📦 Map source: Precomputed cache (real model run)"
+        else:
+            badge_bg = "rgba(254, 247, 224, 0.95)"
+            badge_color = "#b06000"
+            badge_border = "#fdd663"
+            badge_text = "⚠️ Map source: Illustrative pattern — NOT model output"
+
+        badge_html = f"""
+        <div style="position:fixed;top:52px;left:50%;transform:translateX(-50%);
+                    background:{badge_bg};color:{badge_color};padding:4px 14px;
+                    border-radius:12px;border:1.5px solid {badge_border};z-index:1000;
+                    font-family:Arial,sans-serif;font-size:12px;font-weight:bold;box-shadow:0 2px 6px rgba(0,0,0,0.12);">
+            {badge_text}
+        </div>"""
+        m.get_root().html.add_child(folium.Element(badge_html))
 
     H, W = len(lats_arr), len(lons_arr)
 

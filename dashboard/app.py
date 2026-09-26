@@ -381,6 +381,7 @@ with tab1:
                 title=f"Confidence — {event_label} Day {lead_day}",
                 mode="confidence" if map_mode == "Confidence (%)" else "bust",
                 subsample=map_subsample,
+                data_source=data_source,
             )
             if m:
                 folium_static(m, width=720, height=460)
@@ -396,6 +397,13 @@ with tab1:
                 color_continuous_scale=cscale, aspect="auto",
                 labels={"x": "Longitude", "y": "Latitude", "color": label},
                 title=f"🗺️ {event_label} | Day {lead_day} | {label}",
+            )
+            fig.add_annotation(
+                text="📍 Live model output" if has_real_grid else "⚠️ Illustrative pattern — NOT model output",
+                xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False,
+                bgcolor="#e6f4ea" if has_real_grid else "#fef7e0",
+                bordercolor="#137333" if has_real_grid else "#b06000",
+                font=dict(color="#137333" if has_real_grid else "#b06000", size=12),
             )
             fig.update_layout(height=460)
             st.plotly_chart(fig, use_container_width=True)
@@ -438,6 +446,7 @@ with tab2:
                 high_bust_regions=high_bust_regions,
                 title=f"Bust Probability — {event_label} Day {lead_day}",
                 mode="bust", subsample=map_subsample,
+                data_source=data_source,
             )
             if m_bust:
                 folium_static(m_bust, width=720, height=460)
@@ -450,6 +459,13 @@ with tab2:
                 color_continuous_scale="Reds", aspect="auto",
                 labels={"x": "Longitude", "y": "Latitude", "color": "Bust Prob (%)"},
                 title=f"⚠️ Bust Probability — {event_label} Day {lead_day}",
+            )
+            fig_b.add_annotation(
+                text="📍 Live model output" if has_real_grid else "⚠️ Illustrative pattern — NOT model output",
+                xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False,
+                bgcolor="#e6f4ea" if has_real_grid else "#fef7e0",
+                bordercolor="#137333" if has_real_grid else "#b06000",
+                font=dict(color="#137333" if has_real_grid else "#b06000", size=12),
             )
             fig_b.update_layout(height=460)
             st.plotly_chart(fig_b, use_container_width=True)
