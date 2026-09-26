@@ -1,9 +1,8 @@
 """
 map_widget.py
 -------------
-Folium map component for displaying regional forecast confidence over India.
-Design: Professional government meteorological forecasting system (light palette,
-Esri satellite basemap with administrative boundaries and clear floating legend).
+Reusable Folium map component for displaying forecast confidence
+and bust probability maps over India.
 """
 
 from __future__ import annotations
@@ -16,40 +15,32 @@ except ImportError:
     FOLIUM_AVAILABLE = False
 
 CONFIDENCE_COLORMAP = [
-    (0.0,   "#E5484D"),  # Low (≤ 40%) - Red
-    (40.0,  "#E5484D"),
-    (40.1,  "#F59E0B"),  # Moderate (40 - 80%) - Amber / Yellow
-    (80.0,  "#F59E0B"),
-    (80.1,  "#16A36A"),  # High (≥ 80%) - Green
-    (100.0, "#16A36A"),
+    (0,   "#d73027"),
+    (25,  "#f46d43"),
+    (50,  "#fdae61"),
+    (70,  "#a6d96a"),
+    (85,  "#1a9850"),
+    (100, "#006837"),
 ]
 
 BUST_COLORMAP = [
-    (0.00, "#16A36A"),  # Low bust risk - Green
-    (0.25, "#3B82C4"),  # Moderate blue
-    (0.50, "#F59E0B"),  # Moderate risk - Amber
-    (0.75, "#E5484D"),  # High bust risk - Red
-    (1.00, "#991B1B"),  # Severe bust risk
-]
-
-SUBDIVISIONS_BBOX = [
-    {"name": "Odisha", "bounds": [[17.0, 82.0], [22.0, 88.0]], "center": [19.5, 85.0]},
-    {"name": "Gangetic West Bengal", "bounds": [[21.0, 85.0], [25.0, 90.0]], "center": [23.0, 87.5]},
-    {"name": "Konkan & Goa", "bounds": [[14.0, 72.0], [20.0, 76.0]], "center": [17.0, 74.0]},
-    {"name": "Northwest India", "bounds": [[26.0, 68.0], [32.0, 78.0]], "center": [29.0, 73.0]},
+    (0.0, "#ffffb2"),
+    (0.2, "#fed976"),
+    (0.4, "#fd8d3c"),
+    (0.6, "#f03b20"),
+    (0.8, "#bd0026"),
+    (1.0, "#7a0023"),
 ]
 
 
 def _interpolate_color(value: float, colormap: list) -> str:
-    """Linearly interpolate or step a hex color from a colormap list."""
+    """Linearly interpolate a hex color from a colormap list."""
     vmin, vmax = colormap[0][0], colormap[-1][0]
     v = max(vmin, min(vmax, value))
     for i in range(len(colormap) - 1):
         v0, c0 = colormap[i]
         v1, c1 = colormap[i + 1]
         if v0 <= v <= v1:
-            if v0 == v1:
-                return c1
             t = (v - v0) / (v1 - v0 + 1e-10)
             r0, g0, b0 = int(c0[1:3], 16), int(c0[3:5], 16), int(c0[5:7], 16)
             r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
@@ -65,14 +56,28 @@ def create_confidence_map(
     lons: list,
     confidence_map: list,
     bust_prob_map: list,
-    error_map: list = None,
     high_bust_regions: list = None,
-    title: str = "Regional Forecast Confidence",
+    title: str = "Forecast Confidence Map",
     mode: str = "confidence",
-    subsample: int = 2,
+    subsample: int = 4,
+    data_source: str = "",
 ):
     """
-    Create the operational satellite-based Folium map matching the reference dashboard.
+    Create an interactive Folium map with confidence/bust probability overlay.
+
+    Args:
+        lats: Latitude values
+        lons: Longitude values
+        confidence_map: [H, W] confidence values 0–100
+        bust_prob_map: [H, W] bust probability 0–1
+        high_bust_regions: List of region dicts with lat/lon centers
+        title: Map title
+        mode: 'confidence' or 'bust'
+        subsample: Draw every Nth grid point (lower = more detail, slower)
+        data_source: Provenance indicator ('live_model', 'precomputed_cache', 'illustrative_only')
+
+    Returns:
+        Folium Map object (or None if folium not installed)
     """
     if not FOLIUM_AVAILABLE:
         return None
@@ -81,112 +86,127 @@ def create_confidence_map(
     lons_arr = np.array(lons)
     conf_arr = np.array(confidence_map)
     bust_arr = np.array(bust_prob_map)
-    err_arr  = np.array(error_map) if error_map is not None else None
 
-    # Center on India
     m = folium.Map(
-        location=[22.8, 80.5],
+        location=[22.0, 82.0],
         zoom_start=5,
-        tiles=None,
+        tiles="CartoDB positron",
         control_scale=True,
     )
 
-    # 1. Base Layer: Esri World Imagery (Satellite)
-    folium.TileLayer(
-        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="&copy; Esri &bull; Earthstar Geographics",
-        name="Satellite",
-        control=False,
-    ).add_to(m)
+    # Title overlay
+    title_html = f"""
+    <div style="position:fixed;top:10px;left:50%;transform:translateX(-50%);
+                background:rgba(255,255,255,0.92);padding:8px 18px;
+                border-radius:8px;border:2px solid #333;z-index:1000;
+                font-family:Arial;font-size:14px;font-weight:bold;">
+        {title}
+    </div>"""
+    m.get_root().html.add_child(folium.Element(title_html))
 
-    # 2. Administrative Boundaries & Geographical Labels Overlay
-    folium.TileLayer(
-        tiles="https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png",
-        attr="&copy; OpenStreetMap &copy; CARTO",
-        name="Boundaries & Labels",
-        overlay=True,
-        control=False,
-    ).add_to(m)
+    # Per-map provenance badge directly on the map figure
+    if data_source:
+        if data_source == "live_model":
+            badge_bg = "rgba(230, 244, 234, 0.95)"
+            badge_color = "#137333"
+            badge_border = "#ceead6"
+            badge_text = "📍 Map source: Live model output (ForecastBustUNet)"
+        elif data_source == "precomputed_cache":
+            badge_bg = "rgba(232, 240, 254, 0.95)"
+            badge_color = "#1a73e8"
+            badge_border = "#d2e3fc"
+            badge_text = "📦 Map source: Precomputed cache (real model run)"
+        else:
+            badge_bg = "rgba(254, 247, 224, 0.95)"
+            badge_color = "#b06000"
+            badge_border = "#fdd663"
+            badge_text = "⚠️ Map source: Illustrative pattern — NOT model output"
+
+        badge_html = f"""
+        <div style="position:fixed;top:52px;left:50%;transform:translateX(-50%);
+                    background:{badge_bg};color:{badge_color};padding:4px 14px;
+                    border-radius:12px;border:1.5px solid {badge_border};z-index:1000;
+                    font-family:Arial,sans-serif;font-size:12px;font-weight:bold;box-shadow:0 2px 6px rgba(0,0,0,0.12);">
+            {badge_text}
+        </div>"""
+        m.get_root().html.add_child(folium.Element(badge_html))
 
     H, W = len(lats_arr), len(lons_arr)
-    step = max(1, subsample)
-    cell_deg = 0.25 * step
 
-    # Grid Rectangles with Forecast Confidence / Bust overlay
-    for i in range(0, H, step):
-        for j in range(0, W, step):
+    # Grid rectangles (subsampled for performance)
+    for i in range(0, H, subsample):
+        for j in range(0, W, subsample):
             lat = float(lats_arr[i])
             lon = float(lons_arr[j])
-            conf_val = float(conf_arr[i, j]) if conf_arr.shape == (H, W) else 50.0
-            bust_val = float(bust_arr[i, j]) if bust_arr.shape == (H, W) else 0.5
-            err_val  = float(err_arr[i, j]) if (err_arr is not None and err_arr.shape == (H, W)) else 0.0
+            conf = float(conf_arr[i, j]) if conf_arr.shape == (H, W) else 50.0
+            bust = float(bust_arr[i, j]) if bust_arr.shape == (H, W) else 0.5
 
             if mode == "confidence":
-                if conf_val >= 80.0:
-                    color = "#16A36A"  # High
-                    fill_op = 0.72
-                elif conf_val >= 40.0:
-                    color = "#F59E0B"  # Moderate
-                    fill_op = 0.68
-                else:
-                    color = "#E5484D"  # Low
-                    fill_op = 0.78
+                color = _interpolate_color(conf, CONFIDENCE_COLORMAP)
+                tip = f"Lat:{lat:.2f} Lon:{lon:.2f} | Conf:{conf:.1f}% | Bust:{bust:.2f}"
             else:
-                color = _interpolate_color(bust_val, BUST_COLORMAP)
-                fill_op = 0.70
+                color = _interpolate_color(bust, BUST_COLORMAP)
+                tip = f"Lat:{lat:.2f} Lon:{lon:.2f} | Bust:{bust:.2f} | Conf:{conf:.1f}%"
 
-            tip_html = f"""
-            <div style="font-family:Inter,sans-serif;font-size:11px;color:#102A43;background:#FFFFFF;padding:6px 8px;border-radius:4px;box-shadow:0 2px 6px rgba(16,42,67,0.15);border:1px solid #D9E3EA;">
-                <div style="font-weight:700;color:#123B6D;margin-bottom:2px;">COORDINATE: {lat:.2f}&deg;N, {lon:.2f}&deg;E</div>
-                <div>Confidence: <strong style="color:{'#16A36A' if conf_val>=80 else ('#F59E0B' if conf_val>=40 else '#E5484D')};">{conf_val:.1f}%</strong></div>
-                <div>Bust Probability: <strong>{bust_val:.1%}</strong></div>
-                <div>Predicted Error: <strong>{err_val:.1f} mm/day</strong></div>
-            </div>
-            """
-
+            cell = subsample * 0.25
             folium.Rectangle(
-                bounds=[[lat - cell_deg/2, lon - cell_deg/2], [lat + cell_deg/2, lon + cell_deg/2]],
+                bounds=[[lat - cell/2, lon - cell/2], [lat + cell/2, lon + cell/2]],
                 color=None,
                 fill=True,
                 fill_color=color,
-                fill_opacity=fill_op,
-                tooltip=folium.Tooltip(tip_html, sticky=True),
+                fill_opacity=0.65,
+                tooltip=tip,
             ).add_to(m)
 
-    # Subdivision Boundary Lines
-    for sub in SUBDIVISIONS_BBOX:
-        folium.Rectangle(
-            bounds=sub["bounds"],
-            color="#FFFFFF",
-            weight=1.5,
-            dash_array="3, 3",
-            fill=False,
-            tooltip=f"{sub['name']} (IMD Subdivision)",
-        ).add_to(m)
+    # High-bust region markers
+    if high_bust_regions:
+        for r in high_bust_regions:
+            prob = r.get("mean_bust_prob", 0)
+            name = r.get("name", "")
+            lat_c = r.get("lat_center", 20.0)
+            lon_c = r.get("lon_center", 80.0)
+            area_frac = r.get("area_fraction", 0)
+            if prob < 0.4:
+                continue
+            popup_html = f"""<div style="font-family:Arial;min-width:180px;">
+                <b style="color:#d62728;">⚠ High Bust Risk</b><br>
+                <b>Region:</b> {name}<br>
+                <b>Bust Probability:</b> {prob:.1%}<br>
+                <b>Area Affected:</b> {area_frac:.1%}
+            </div>"""
+            folium.Marker(
+                location=[lat_c, lon_c],
+                popup=folium.Popup(popup_html, max_width=220),
+                tooltip=f"⚠ {name}: {prob:.1%} bust prob",
+                icon=folium.Icon(
+                    color="red" if prob > 0.7 else "orange",
+                    icon="exclamation-sign",
+                    prefix="glyphicon",
+                ),
+            ).add_to(m)
 
-    # Floating Legend on Bottom-Left (matching reference image)
-    legend_html = """
-    <div style="position:fixed;bottom:24px;left:20px;z-index:1000;
-                background:rgba(16,42,67,0.85);backdrop-filter:blur(4px);
-                padding:10px 14px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);
-                font-family:'Inter',sans-serif;color:#FFFFFF;box-shadow:0 4px 12px rgba(0,0,0,0.3);min-width:140px;">
-        <div style="font-size:11px;font-weight:700;color:#FFFFFF;margin-bottom:6px;letter-spacing:0.3px;">
-            Forecast Confidence
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:11px;">
-            <span style="background:#16A36A;width:12px;height:12px;display:inline-block;border-radius:2px;"></span>
-            <span>High (&ge; 80%)</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:11px;">
-            <span style="background:#F59E0B;width:12px;height:12px;display:inline-block;border-radius:2px;"></span>
-            <span>Moderate (40 &ndash; 80%)</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:11px;">
-            <span style="background:#E5484D;width:12px;height:12px;display:inline-block;border-radius:2px;"></span>
-            <span>Low (&le; 40%)</span>
-        </div>
-    </div>
-    """
+    # Legend
+    if mode == "confidence":
+        vals = [0, 25, 50, 75, 100]
+        lbls = ["0% (Bust)", "25%", "50%", "75%", "100% (High conf)"]
+        colors = [_interpolate_color(v, CONFIDENCE_COLORMAP) for v in vals]
+        leg_title = "Forecast Confidence"
+    else:
+        vals = [0, 0.25, 0.5, 0.75, 1.0]
+        lbls = ["0 (No risk)", "0.25", "0.5", "0.75", "1.0 (Certain bust)"]
+        colors = [_interpolate_color(v, BUST_COLORMAP) for v in vals]
+        leg_title = "Bust Probability"
+
+    items = "".join(
+        f'<div><span style="background:{c};width:20px;height:12px;display:inline-block;'
+        f'margin-right:5px;border-radius:2px;"></span>{l}</div>'
+        for c, l in zip(colors, lbls)
+    )
+    legend_html = f"""
+    <div style="position:fixed;bottom:30px;left:15px;z-index:1000;
+                background:rgba(255,255,255,0.95);padding:10px 14px;
+                border-radius:8px;border:1px solid #999;font-family:Arial;font-size:12px;">
+        <b>{leg_title}</b><br>{items}
+    </div>"""
     m.get_root().html.add_child(folium.Element(legend_html))
-
     return m

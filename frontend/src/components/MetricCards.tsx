@@ -29,23 +29,12 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
             <div className="text-[26px] font-bold text-[#102A43] tracking-tight leading-tight mt-0.5 font-sans">
               {confidence.toFixed(1)}%
             </div>
-            <div className="text-[11px] font-semibold text-[#26966F] flex items-center gap-1">
-              <span>&uarr;</span> 4.2% vs Day 1
+            <div className="text-[11px] font-semibold flex items-center gap-1">
+              <span className={confidence >= 70 ? 'text-[#26966F]' : (confidence >= 40 ? 'text-[#D99A28]' : 'text-[#D94B55]')}>
+                {confidence >= 70 ? '● High Confidence' : (confidence >= 40 ? '▲ Moderate Confidence' : '▼ Low Confidence')}
+              </span>
             </div>
           </div>
-        </div>
-
-        {/* Green Upward Sparkline */}
-        <div className="hidden sm:block">
-          <svg width="68" height="26" viewBox="0 0 68 26" fill="none">
-            <path
-              d="M2 20 Q 20 22, 38 12 T 66 4"
-              stroke="#26966F"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-          </svg>
         </div>
       </div>
 
@@ -62,23 +51,12 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
             <div className="text-[26px] font-bold text-[#102A43] tracking-tight leading-tight mt-0.5 font-sans">
               {(bustProb * 100).toFixed(1)}%
             </div>
-            <div className="text-[11px] font-semibold text-[#D94B55] flex items-center gap-1">
-              <span>&uarr;</span> 6% vs Day 1
+            <div className="text-[11px] font-semibold flex items-center gap-1">
+              <span className={bustProb >= 0.5 ? 'text-[#D94B55]' : (bustProb >= 0.3 ? 'text-[#D99A28]' : 'text-[#26966F]')}>
+                {bustProb >= 0.5 ? '▲ P90 Bust Alert' : (bustProb >= 0.3 ? '▲ Elevated Risk' : '● Low Bust Risk')}
+              </span>
             </div>
           </div>
-        </div>
-
-        {/* Red Upward Sparkline */}
-        <div className="hidden sm:block">
-          <svg width="68" height="26" viewBox="0 0 68 26" fill="none">
-            <path
-              d="M2 18 Q 22 20, 42 12 T 66 4"
-              stroke="#D94B55"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-          </svg>
         </div>
       </div>
 
@@ -95,23 +73,10 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
             <div className="text-[26px] font-bold text-[#102A43] tracking-tight leading-tight mt-0.5 font-sans">
               {expectedError.toFixed(1)} mm
             </div>
-            <div className="text-[11px] font-semibold text-[#26966F] flex items-center gap-1">
-              <span>&darr;</span> 18% vs Day 1
+            <div className="text-[11px] font-semibold text-[#1769AA] flex items-center gap-1">
+              <span>Domain Spatial MAE</span>
             </div>
           </div>
-        </div>
-
-        {/* Blue Downward Sparkline */}
-        <div className="hidden sm:block">
-          <svg width="68" height="26" viewBox="0 0 68 26" fill="none">
-            <path
-              d="M2 4 Q 22 6, 42 16 T 66 22"
-              stroke="#1769AA"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-          </svg>
         </div>
       </div>
 

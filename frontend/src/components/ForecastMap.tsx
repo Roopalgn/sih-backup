@@ -10,6 +10,7 @@ interface ForecastMapProps {
   leadDay: number;
   onLeadDayChange: (lead: number) => void;
   mode?: 'confidence' | 'bust';
+  dataSource?: string;
 }
 
 export const ForecastMap: React.FC<ForecastMapProps> = ({
@@ -21,6 +22,7 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
   leadDay,
   onLeadDayChange,
   mode = 'confidence',
+  dataSource = 'live_model',
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -218,6 +220,26 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
       <div className="relative w-full h-[440px]">
         <div ref={mapContainerRef} className="w-full h-full" />
 
+        {/* Map Provenance Badge directly on map */}
+        <div className="absolute top-3 left-14 z-[1000] pointer-events-none">
+          {dataSource === 'live_model' ? (
+            <div className="bg-[#E6F4EA]/95 border border-[#CEEAD6] text-[#137333] px-3 py-1 rounded-full text-[11px] font-bold shadow-sm flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-[#137333]"></span>
+              <span>📍 Live model output (ForecastBustUNet)</span>
+            </div>
+          ) : dataSource === 'precomputed_cache' ? (
+            <div className="bg-[#E8F0FE]/95 border border-[#D2E3FC] text-[#1A73E8] px-3 py-1 rounded-full text-[11px] font-bold shadow-sm flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-[#1A73E8]"></span>
+              <span>📦 Precomputed model cache</span>
+            </div>
+          ) : (
+            <div className="bg-[#FEF7E0]/95 border border-[#FDD663] text-[#B06000] px-3 py-1 rounded-full text-[11px] font-bold shadow-sm flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-[#B06000]"></span>
+              <span>⚠️ Illustrative pattern — NOT model output</span>
+            </div>
+          )}
+        </div>
+
         {/* Floating Legend (Matching reference image bottom-left) */}
         <div className="absolute bottom-4 left-4 z-[1000] bg-white/95 backdrop-blur-sm border border-[#DCE5EC] rounded-lg p-2.5 px-3.5 shadow-md">
           <div className="text-[11px] font-bold text-[#102A43] mb-1.5">
@@ -255,6 +277,20 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
             </div>
           )}
         </div>
+      </div>
+
+      {/* Per-Map Provenance Caption */}
+      <div className="px-4 py-2 bg-[#F8FAFC] border-t border-[#DCE5EC] text-[11px] text-[#64748B] flex items-center justify-between">
+        <div>
+          {dataSource === 'live_model' ? (
+            <span>📍 <strong>Map source: Live model output</strong> — real GEFS forecast processed by ForecastBustUNet.</span>
+          ) : dataSource === 'precomputed_cache' ? (
+            <span>📦 <strong>Map source: Precomputed cache</strong> — real model run cached for validation event.</span>
+          ) : (
+            <span className="text-[#B06000]">⚠️ <strong>Map source: Illustrative pattern</strong> — NOT model output. Generated locally for layout only.</span>
+          )}
+        </div>
+        <div className="text-[10px] text-[#94A3B8]">Domain: 14&deg;N&ndash;32&deg;N, 68&deg;E&ndash;90&deg;E</div>
       </div>
     </div>
   );

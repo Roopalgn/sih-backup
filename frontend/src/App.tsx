@@ -189,6 +189,7 @@ export const App: React.FC = () => {
                 leadDay={leadDay}
                 onLeadDayChange={setLeadDay}
                 mode={activeTab === 'forecast' ? 'confidence' : 'confidence'}
+                dataSource={currentData?.data_source ?? 'live_model'}
               />
             </div>
 

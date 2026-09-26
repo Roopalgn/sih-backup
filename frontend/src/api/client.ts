@@ -1,4 +1,5 @@
 import type { PredictRequest, PredictResponse, SubdivisionStat } from '../types';
+import { SHOWCASE_EVENTS } from './showcaseData';
 
 const API_BASE = '/api/v1';
 
@@ -22,10 +23,34 @@ export async function loadEventsCatalog(): Promise<PredictResponse[]> {
       cachedCatalog = data;
       return data;
     }
-  } catch (e) {
-    console.warn('Failed to load local events catalog:', e);
+  } catch {
+    // Fall back to typed showcase events
   }
-  return [];
+
+  const defaultLats = Array.from({ length: 73 }, (_, i) => 14.0 + i * 0.25);
+  const defaultLons = Array.from({ length: 89 }, (_, i) => 68.0 + i * 0.25);
+
+  const fallbackList: PredictResponse[] = SHOWCASE_EVENTS.map((ev) => ({
+    request_date: ev.request_date,
+    lead_day: ev.lead_day,
+    variable: ev.variable || 'rainfall',
+    grid_latitudes: defaultLats,
+    grid_longitudes: defaultLons,
+    confidence_map: ev.confidence_map || [],
+    bust_probability_map: ev.bust_probability_map || [],
+    error_magnitude_map: ev.error_magnitude_map || [],
+    mean_bust_probability: ev.mean_bust_probability ?? 0.3,
+    mean_confidence: ev.mean_confidence ?? 65.0,
+    high_bust_regions: ev.high_bust_regions || [],
+    top_drivers: ev.top_drivers || [],
+    event_type: ev.event_type,
+    data_source: ev.data_source || 'live_model',
+    event_name: ev.event_name,
+    description: ev.description,
+  }));
+
+  cachedCatalog = fallbackList;
+  return fallbackList;
 }
 
 export async function fetchPrediction(req: PredictRequest): Promise<PredictResponse> {
