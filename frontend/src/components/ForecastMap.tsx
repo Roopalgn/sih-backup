@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 
 interface ForecastMapProps {
@@ -7,9 +7,7 @@ interface ForecastMapProps {
   confidenceMap: number[][];
   bustMap: number[][];
   errorMap: number[][];
-  leadDay: number;
-  onLeadDayChange: (lead: number) => void;
-  mode?: 'confidence' | 'bust';
+  mode?: 'confidence' | 'bust' | 'error';
   dataSource?: string;
 }
 
@@ -19,15 +17,13 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
   confidenceMap,
   bustMap,
   errorMap,
-  leadDay,
-  onLeadDayChange,
   mode = 'confidence',
   dataSource = 'live_model',
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
-  const [selectedMode, setSelectedMode] = useState<'confidence' | 'bust'>(mode);
+  const selectedMode = mode;
 
   // Initialize Map Once
   useEffect(() => {
@@ -41,14 +37,14 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
       minZoom: 4,
       maxZoom: 10,
       zoomControl: true,
-      attributionControl: false,
+      attributionControl: true,
     });
 
     // Legitimate, watermark-free OpenStreetMap basemap with complete geographic context and state boundaries
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 18,
       subdomains: ['a', 'b', 'c'],
-      attribution: '&copy; OpenStreetMap contributors &bull; NCMRWF / MoES',
+      attribution: '&copy; OpenStreetMap contributors',
     }).addTo(map);
 
     const layerGroup = L.layerGroup().addTo(map);
@@ -85,6 +81,12 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
     const W = lons.length;
     if (H === 0 || W === 0) return;
 
+    const errors = errorMap.flat().filter(Number.isFinite).sort((a, b) => a - b);
+    const errorQuantile = (q: number) => errors[Math.min(errors.length - 1, Math.floor((errors.length - 1) * q))] ?? 0;
+    const errP25 = errorQuantile(0.25);
+    const errP50 = errorQuantile(0.50);
+    const errP75 = errorQuantile(0.75);
+
     const step = 2; // Render at 0.50° resolution for high performance
     const cellDeg = 0.25 * step;
 
@@ -92,21 +94,32 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
       const lat = lats[i];
       for (let j = 0; j < W; j += step) {
         const lon = lons[j];
-        const confVal = confidenceMap[i]?.[j] ?? 60;
-        const bustVal = bustMap[i]?.[j] ?? 0.3;
-        const errVal = errorMap?.[i]?.[j] ?? 5.0;
+        const confVal = confidenceMap[i]?.[j];
+        const bustVal = bustMap[i]?.[j];
+        const errVal = errorMap?.[i]?.[j];
+        // Unsupported or masked grid cells stay transparent instead of being
+        // painted with plausible-looking default predictions.
+        if (typeof confVal !== 'number' || !Number.isFinite(confVal) ||
+            typeof bustVal !== 'number' || !Number.isFinite(bustVal) ||
+            typeof errVal !== 'number' || !Number.isFinite(errVal)) continue;
 
         let fillColor = '#26966F';
         let fillOpacity = 0.65;
 
         if (selectedMode === 'confidence') {
-          if (confVal >= 80) fillColor = '#26966F';
-          else if (confVal >= 40) fillColor = '#D99A28';
-          else fillColor = '#D94B55';
+          if (confVal >= 80) fillColor = '#45bcae';
+          else if (confVal >= 40) fillColor = '#dfb263';
+          else fillColor = '#ed776e';
+        } else if (selectedMode === 'bust') {
+          if (bustVal >= 0.6) fillColor = '#ed776e';
+          else if (bustVal >= 0.35) fillColor = '#dfb263';
+          else fillColor = '#45bcae';
         } else {
-          if (bustVal >= 0.6) fillColor = '#D94B55';
-          else if (bustVal >= 0.35) fillColor = '#D99A28';
-          else fillColor = '#26966F';
+          if (errVal <= 0) fillColor = '#315f72';
+          else if (errVal >= errP75) fillColor = '#ed776e';
+          else if (errVal >= errP50) fillColor = '#dfb263';
+          else if (errVal >= errP25) fillColor = '#66aaa7';
+          else fillColor = '#315f72';
         }
 
         const rect = L.rectangle(
@@ -124,8 +137,8 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
 
         rect.bindTooltip(
           `
-          <div style="font-family:'Inter',sans-serif;font-size:11px;color:#102A43;padding:2px;">
-            <div style="font-weight:700;color:#123B6D;margin-bottom:2px;">
+          <div style="font-family:'DM Sans',sans-serif;font-size:11px;color:#e5eff0;padding:2px;">
+            <div style="font-weight:700;color:#8ed1cd;margin-bottom:2px;">
               ${lat.toFixed(2)}&deg;N, ${lon.toFixed(2)}&deg;E
             </div>
             <div>Confidence: <strong style="color:${confVal >= 80 ? '#26966F' : (confVal >= 40 ? '#D99A28' : '#D94B55')}">${confVal.toFixed(1)}%</strong></div>
@@ -162,61 +175,7 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
   }, [lats, lons, confidenceMap, bustMap, errorMap, selectedMode]);
 
   return (
-    <div className="bg-white border border-[#DCE5EC] rounded-lg shadow-card overflow-hidden flex flex-col">
-      {/* Map Header with Subtitle and Lead-Time Pills */}
-      <div className="p-3.5 px-4 border-b border-[#DCE5EC] flex flex-wrap items-center justify-between gap-3 bg-white">
-        <div>
-          <div className="text-[14px] font-bold text-[#102A43] tracking-wide">
-            REGIONAL FORECAST CONFIDENCE
-          </div>
-          <div className="text-[11px] text-[#64748B]">
-            Day {leadDay} &bull; High confidence &rarr; Low confidence / likely bust
-          </div>
-        </div>
-
-        {/* Controls: Select Lead Time Pills */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center bg-[#F4F7FA] border border-[#DCE5EC] p-0.5 rounded-md text-[11px]">
-            <button
-              onClick={() => setSelectedMode('confidence')}
-              className={`px-2 py-1 rounded font-semibold transition-all ${
-                selectedMode === 'confidence' ? 'bg-[#1769AA] text-white' : 'text-[#64748B] hover:text-[#102A43]'
-              }`}
-            >
-              Confidence
-            </button>
-            <button
-              onClick={() => setSelectedMode('bust')}
-              className={`px-2 py-1 rounded font-semibold transition-all ${
-                selectedMode === 'bust' ? 'bg-[#1769AA] text-white' : 'text-[#64748B] hover:text-[#102A43]'
-              }`}
-            >
-              Bust Probability
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-[#64748B] font-medium hidden sm:inline">Select Lead Time</span>
-            <div className="flex gap-1">
-              {[3, 5, 7, 10].map((d) => (
-                <button
-                  key={d}
-                  onClick={() => onLeadDayChange(d)}
-                  className={`px-2.5 py-1 rounded text-xs font-semibold transition-all ${
-                    leadDay === d
-                      ? 'bg-[#1769AA] text-white shadow-sm'
-                      : 'bg-white border border-[#DCE5EC] text-[#526777] hover:bg-[#F4F7FA]'
-                  }`}
-                >
-                  Day {d}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Map Viewport Container */}
+    <div className="map-widget">
       <div className="relative w-full h-[440px]">
         <div ref={mapContainerRef} className="w-full h-full" />
 
@@ -230,7 +189,7 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
           ) : dataSource === 'precomputed_cache' ? (
             <div className="bg-[#E8F0FE]/95 border border-[#D2E3FC] text-[#1A73E8] px-3 py-1 rounded-full text-[11px] font-bold shadow-sm flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-[#1A73E8]"></span>
-              <span>📦 Precomputed model cache</span>
+              <span>Saved output · model lineage unverified</span>
             </div>
           ) : (
             <div className="bg-[#FEF7E0]/95 border border-[#FDD663] text-[#B06000] px-3 py-1 rounded-full text-[11px] font-bold shadow-sm flex items-center gap-1.5">
@@ -240,10 +199,10 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
           )}
         </div>
 
-        {/* Floating Legend (Matching reference image bottom-left) */}
+        {/* The parent dashboard shows the confidence legend beside the map. */}
         <div className="absolute bottom-4 left-4 z-[1000] bg-white/95 backdrop-blur-sm border border-[#DCE5EC] rounded-lg p-2.5 px-3.5 shadow-md">
           <div className="text-[11px] font-bold text-[#102A43] mb-1.5">
-            {selectedMode === 'confidence' ? 'Forecast Confidence' : 'Bust Probability'}
+            {selectedMode === 'confidence' ? 'Forecast Confidence' : selectedMode === 'bust' ? 'Bust Probability' : 'Predicted Error'}
           </div>
           {selectedMode === 'confidence' ? (
             <div className="space-y-1 text-[11px] text-[#526777]">
@@ -260,7 +219,7 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
                 <span>Low (&le; 40%)</span>
               </div>
             </div>
-          ) : (
+          ) : selectedMode === 'bust' ? (
             <div className="space-y-1 text-[11px] text-[#526777]">
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-sm bg-[#D94B55]"></span>
@@ -275,7 +234,7 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
                 <span>Low Risk (&lt; 35%)</span>
               </div>
             </div>
-          )}
+          ) : <div className="space-y-1 text-[11px] text-[#526777]"><div>Relative error classes</div><div>Units: mm/day</div></div>}
         </div>
       </div>
 
@@ -285,7 +244,7 @@ export const ForecastMap: React.FC<ForecastMapProps> = ({
           {dataSource === 'live_model' ? (
             <span>📍 <strong>Map source: Live model output</strong> — real GEFS forecast processed by ForecastBustUNet.</span>
           ) : dataSource === 'precomputed_cache' ? (
-            <span>📦 <strong>Map source: Precomputed cache</strong> — real model run cached for validation event.</span>
+            <span>📦 <strong>Map source: Saved output</strong> — model lineage is not bundled for independent verification.</span>
           ) : (
             <span className="text-[#B06000]">⚠️ <strong>Map source: Illustrative pattern</strong> — NOT model output. Generated locally for layout only.</span>
           )}
