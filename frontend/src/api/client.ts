@@ -1,5 +1,4 @@
 import type { PredictRequest, PredictResponse, SubdivisionStat } from '../types';
-import { SHOWCASE_EVENTS } from './showcaseData';
 
 const API_BASE = '/api/v1';
 
@@ -27,69 +26,39 @@ export async function loadEventsCatalog(): Promise<PredictResponse[]> {
     // Fall back to typed showcase events
   }
 
-  const defaultLats = Array.from({ length: 73 }, (_, i) => 14.0 + i * 0.25);
-  const defaultLons = Array.from({ length: 89 }, (_, i) => 68.0 + i * 0.25);
-
-  const fallbackList: PredictResponse[] = SHOWCASE_EVENTS.map((ev) => ({
-    request_date: ev.request_date,
-    lead_day: ev.lead_day,
-    variable: ev.variable || 'rainfall',
-    grid_latitudes: defaultLats,
-    grid_longitudes: defaultLons,
-    confidence_map: ev.confidence_map || [],
-    bust_probability_map: ev.bust_probability_map || [],
-    error_magnitude_map: ev.error_magnitude_map || [],
-    mean_bust_probability: ev.mean_bust_probability ?? 0.3,
-    mean_confidence: ev.mean_confidence ?? 65.0,
-    high_bust_regions: ev.high_bust_regions || [],
-    top_drivers: ev.top_drivers || [],
-    event_type: ev.event_type,
-    data_source: ev.data_source || 'live_model',
-    event_name: ev.event_name,
-    description: ev.description,
-  }));
-
-  cachedCatalog = fallbackList;
-  return fallbackList;
+  // An unavailable cache is empty. Metadata-only showcase cards must never
+  // be promoted to prediction maps or numeric model output.
+  cachedCatalog = [];
+  return cachedCatalog;
 }
 
 export async function fetchPrediction(req: PredictRequest): Promise<PredictResponse> {
-  // First, check if there is an exact matching precomputed event in catalog
+  // Only accept an exact date/lead/variable match. Never relabel a nearby case.
   const catalog = await loadEventsCatalog();
   const matchedEvent = catalog.find(
     (e) =>
-      (e.request_date === req.date || e.event_name?.toLowerCase().includes(req.date)) &&
-      e.lead_day === req.lead_day
+      e.request_date === req.date &&
+      e.lead_day === req.lead_day &&
+      e.variable === req.variable
   );
 
-  try {
-    const res = await fetch(`${API_BASE}/predict`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
-    });
-
-    if (res.ok) {
-      return await res.json();
+  if (req.use_cache !== false) {
+    try {
+      const res = await fetch(`${API_BASE}/predict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req),
+      });
+      if (res.ok) return await res.json();
+    } catch {
+      // Continue to exact local cache when the API is offline.
     }
-  } catch (err) {
-    console.warn('[API Client] Live predict endpoint error, checking local catalog:', err);
   }
 
-  // Fallback to matched catalog event if API fails
+  // Local cached events are useful for an offline judge demo, with provenance
+  // explicitly downgraded to a saved result rather than live inference.
   if (matchedEvent) {
-    return matchedEvent;
-  }
-
-  // Fallback to closest catalog event
-  if (catalog.length > 0) {
-    const fallback = catalog.find((e) => e.lead_day === req.lead_day) || catalog[0];
-    return {
-      ...fallback,
-      request_date: req.date,
-      lead_day: req.lead_day,
-      data_source: fallback.data_source || 'precomputed_cache',
-    };
+    return { ...matchedEvent, data_source: matchedEvent.data_source === 'illustrative_only' ? 'illustrative_only' : 'precomputed_cache', from_cache: true };
   }
 
   throw new Error(`Prediction unavailable for ${req.date} (Day ${req.lead_day})`);
