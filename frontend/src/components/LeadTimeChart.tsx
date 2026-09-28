@@ -1,139 +1,117 @@
 import React from 'react';
 
-interface LeadTimeChartProps {
-  currentConfidence: number;
-  currentBustProb: number;
-  currentLeadDay: number;
+interface LeadPoint {
+  day: number;
+  conf: number;    // 0–100
+  bust: number;    // 0–100
+  isReal: boolean;
 }
 
-export const LeadTimeChart: React.FC<LeadTimeChartProps> = ({
-  currentConfidence,
-  currentBustProb,
-  currentLeadDay,
-}) => {
-  // Compute calibrated lead time progression anchored around the active run
-  const data = [
-    { lead: 'Day 3', day: 3, conf: 69.4, bust: 31.8 },
-    { lead: 'Day 5', day: 5, conf: 61.8, bust: 38.4 },
-    { lead: 'Day 7', day: 7, conf: 48.2, bust: 51.7 },
-    { lead: 'Day 10', day: 10, conf: 35.7, bust: 63.1 },
-  ].map((d) => {
-    if (d.day === currentLeadDay) {
-      return {
-        ...d,
-        conf: Number(currentConfidence.toFixed(1)),
-        bust: Number((currentBustProb * 100).toFixed(1)),
-      };
-    }
-    return d;
-  });
+interface LeadTimeChartProps {
+  points: LeadPoint[];
+  activeLead: number;
+}
+
+export const LeadTimeChart: React.FC<LeadTimeChartProps> = ({ points, activeLead }) => {
+  if (!points.length) return null;
+
+  const W = 360;
+  const H = 140;
+  const PAD = { top: 24, right: 16, bottom: 28, left: 32 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  const xs = points.map((_, i) => PAD.left + (i / (points.length - 1 || 1)) * chartW);
+  const toY = (pct: number) => PAD.top + chartH - (pct / 100) * chartH;
+
+  const confPath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${xs[i].toFixed(1)},${toY(p.conf).toFixed(1)}`).join(' ');
+  const bustPath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${xs[i].toFixed(1)},${toY(p.bust).toFixed(1)}`).join(' ');
+
+  const gridLines = [0, 25, 50, 75, 100];
 
   return (
-    <div className="bg-white border border-[#DCE5EC] rounded-lg p-3.5 shadow-card">
-      <div className="flex items-center justify-between mb-1">
-        <div className="text-[12px] font-bold text-[#102A43] tracking-wide uppercase">
-          FORECAST RELIABILITY (LEAD TIME)
-        </div>
-        <div className="flex items-center gap-3 text-[11px] text-[#64748B]">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#1769AA]"></span>
-            <span>Confidence</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#D94B55]"></span>
-            <span>Bust Probability</span>
-          </div>
+    <div className="lead-chart-card">
+      <div className="lead-chart-header">
+        <span className="panel-kicker">LEAD-TIME RELIABILITY</span>
+        <div className="lead-chart-legend">
+          <span><i style={{ background: '#7ac9f7' }} />Confidence</span>
+          <span><i style={{ background: '#f08c6e' }} />Bust Prob</span>
         </div>
       </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+        {/* Grid lines */}
+        {gridLines.map(pct => (
+          <g key={pct}>
+            <line
+              x1={PAD.left} y1={toY(pct)}
+              x2={PAD.left + chartW} y2={toY(pct)}
+              stroke="#2a405d" strokeWidth="1" strokeDasharray={pct === 0 ? 'none' : '3 3'}
+            />
+            <text x={PAD.left - 5} y={toY(pct) + 3.5} textAnchor="end"
+              fontSize="8" fill="#7191b3" fontFamily="DM Mono, monospace">
+              {pct}
+            </text>
+          </g>
+        ))}
 
-      {/* SVG Grouped Bar Chart */}
-      <div className="w-full h-[180px] pt-4">
-        <svg viewBox="0 0 380 160" className="w-full h-full overflow-visible">
-          {/* Grid lines */}
-          <line x1="30" y1="20" x2="370" y2="20" stroke="#EAF1F6" strokeWidth="1" strokeDasharray="3 3" />
-          <text x="5" y="24" fontSize="9" fill="#94A3B8" fontFamily="Inter, sans-serif">100%</text>
+        {/* Confidence line */}
+        <path d={confPath} fill="none" stroke="#7ac9f7" strokeWidth="2" strokeLinejoin="round" />
+        {/* Bust line */}
+        <path d={bustPath} fill="none" stroke="#f08c6e" strokeWidth="2" strokeLinejoin="round" />
 
-          <line x1="30" y1="75" x2="370" y2="75" stroke="#EAF1F6" strokeWidth="1" strokeDasharray="3 3" />
-          <text x="10" y="79" fontSize="9" fill="#94A3B8" fontFamily="Inter, sans-serif">50%</text>
-
-          <line x1="30" y1="130" x2="370" y2="130" stroke="#DCE5EC" strokeWidth="1" />
-          <text x="15" y="134" fontSize="9" fill="#94A3B8" fontFamily="Inter, sans-serif">0%</text>
-
-          {/* Grouped Bars */}
-          {data.map((item, idx) => {
-            const groupX = 60 + idx * 80;
-            const maxH = 110; // from y=20 to y=130
-
-            const confH = (item.conf / 100) * maxH;
-            const confY = 130 - confH;
-
-            const bustH = (item.bust / 100) * maxH;
-            const bustY = 130 - bustH;
-
-            const barW = 20;
-
-            return (
-              <g key={item.lead}>
-                {/* Confidence Bar (Blue) */}
+        {/* Points */}
+        {points.map((p, i) => {
+          const isActive = p.day === activeLead;
+          const cx = xs[i];
+          return (
+            <g key={p.day}>
+              {/* Active lead highlight bar */}
+              {isActive && (
                 <rect
-                  x={groupX}
-                  y={confY}
-                  width={barW}
-                  height={confH}
-                  fill="#1769AA"
-                  rx="2"
-                  className="transition-all hover:opacity-90"
+                  x={cx - 12} y={PAD.top}
+                  width={24} height={chartH}
+                  fill="#6dafff10" rx="3"
                 />
-                <text
-                  x={groupX + barW / 2}
-                  y={confY - 4}
-                  textAnchor="middle"
-                  fontSize="9.5"
-                  fontWeight="600"
-                  fill="#102A43"
-                  fontFamily="Inter, sans-serif"
-                >
-                  {item.conf}%
-                </text>
-
-                {/* Bust Probability Bar (Coral / Red) */}
-                <rect
-                  x={groupX + barW + 4}
-                  y={bustY}
-                  width={barW}
-                  height={bustH}
-                  fill="#D94B55"
-                  rx="2"
-                  className="transition-all hover:opacity-90"
-                />
-                <text
-                  x={groupX + barW + 4 + barW / 2}
-                  y={bustY - 4}
-                  textAnchor="middle"
-                  fontSize="9.5"
-                  fontWeight="600"
-                  fill="#102A43"
-                  fontFamily="Inter, sans-serif"
-                >
-                  {item.bust}%
-                </text>
-
-                {/* X-axis Label */}
-                <text
-                  x={groupX + barW + 2}
-                  y="148"
-                  textAnchor="middle"
-                  fontSize="11"
-                  fontWeight="500"
-                  fill="#64748B"
-                  fontFamily="Inter, sans-serif"
-                >
-                  {item.lead}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
+              )}
+              {/* Confidence dot */}
+              <circle cx={cx} cy={toY(p.conf)} r={isActive ? 5 : 3.5}
+                fill={isActive ? '#7ac9f7' : '#3679bb'}
+                stroke={isActive ? '#edf7ff' : 'none'} strokeWidth="1.5" />
+              {/* Bust dot */}
+              <circle cx={cx} cy={toY(p.bust)} r={isActive ? 5 : 3.5}
+                fill={isActive ? '#f08c6e' : '#b34e38'}
+                stroke={isActive ? '#edf7ff' : 'none'} strokeWidth="1.5" />
+              {/* X label */}
+              <text x={cx} y={H - 5} textAnchor="middle"
+                fontSize="9" fill={isActive ? '#e8f3ff' : '#7191b3'}
+                fontWeight={isActive ? '600' : '400'}
+                fontFamily="DM Mono, monospace">
+                D{String(p.day).padStart(2, '0')}
+              </text>
+              {/* Value labels on active point */}
+              {isActive && (
+                <>
+                  <text x={cx} y={toY(p.conf) - 8} textAnchor="middle"
+                    fontSize="9" fill="#a8dcf7" fontFamily="DM Mono, monospace">
+                    {p.conf.toFixed(1)}%
+                  </text>
+                  <text x={cx} y={toY(p.bust) + 14} textAnchor="middle"
+                    fontSize="9" fill="#f4a88a" fontFamily="DM Mono, monospace">
+                    {p.bust.toFixed(1)}%
+                  </text>
+                </>
+              )}
+              {/* Dashed indicator for estimated points */}
+              {!p.isReal && (
+                <circle cx={cx} cy={toY(p.conf)} r={isActive ? 5 : 3.5}
+                  fill="none" stroke="#4a6a8a" strokeWidth="1" strokeDasharray="2 2" />
+              )}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="lead-chart-note">
+        Values for Days 3, 5, 7, 10 from live model · other leads not in training scope
       </div>
     </div>
   );
