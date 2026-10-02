@@ -124,34 +124,77 @@ def _build_feature_tensor(date_str: str, lead_day: int):
         return None, None, None
 
 
+REGION_RISK_THRESHOLD = 0.30
+MIN_REGION_CELLS = 4
+MAX_REGIONS = 3
+
+
 def _detect_bust_regions(bust_np: np.ndarray, lats: list, lons: list) -> list:
     """
-    Find spatially contiguous high-bust regions using connected components.
-    Returns list of BustRegion objects.
+    Find spatially contiguous review regions using four-neighbour components.
+
+    The model's prototype-scale outputs cluster around 0.25--0.30, so the
+    operational review threshold is 0.30 rather than 0.50.  This is a display
+    threshold for prioritising cells on the map, not a claim that the model is
+    calibrated at 30%.  A dependency-free implementation keeps cached API
+    responses useful in minimal deployment environments as well.
     """
-    try:
-        from scipy.ndimage import label
-        labeled, n_feat = label(bust_np > 0.5)
-    except ImportError:
+    if bust_np.ndim != 2 or not len(lats) or not len(lons):
         return []
 
-    regions = []
-    for rid in range(1, min(n_feat + 1, 5)):
-        mask = labeled == rid
-        if mask.sum() < 4:
+    active = np.isfinite(bust_np) & (bust_np >= REGION_RISK_THRESHOLD)
+    visited = np.zeros_like(active, dtype=bool)
+    components: list[list[tuple[int, int]]] = []
+    height, width = active.shape
+
+    for row, col in zip(*np.where(active)):
+        if visited[row, col]:
             continue
-        lat_arr = np.array(lats)
-        lon_arr = np.array(lons)
-        lat_c   = float((lat_arr[mask.any(axis=1)].min() + lat_arr[mask.any(axis=1)].max()) / 2)
-        lon_c   = float((lon_arr[mask.any(axis=0)].min() + lon_arr[mask.any(axis=0)].max()) / 2)
+        stack = [(int(row), int(col))]
+        visited[row, col] = True
+        component: list[tuple[int, int]] = []
+        while stack:
+            r, c = stack.pop()
+            component.append((r, c))
+            for nr, nc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
+                if 0 <= nr < height and 0 <= nc < width and active[nr, nc] and not visited[nr, nc]:
+                    visited[nr, nc] = True
+                    stack.append((nr, nc))
+        if len(component) >= MIN_REGION_CELLS:
+            components.append(component)
+
+    regions = []
+    for component in components:
+        rows = np.fromiter((point[0] for point in component), dtype=int)
+        cols = np.fromiter((point[1] for point in component), dtype=int)
+        values = bust_np[rows, cols]
         regions.append(BustRegion(
-            name=f"High-risk region {rid}",
-            lat_center=lat_c,
-            lon_center=lon_c,
-            mean_bust_prob=round(float(bust_np[mask].mean()), 3),
-            area_fraction=round(float(mask.mean()), 3),
+            name="Elevated review area",
+            lat_center=round(float(np.mean(np.asarray(lats)[rows])), 3),
+            lon_center=round(float(np.mean(np.asarray(lons)[cols])), 3),
+            mean_bust_prob=round(float(values.mean()), 3),
+            area_fraction=round(float(len(component) / bust_np.size), 3),
         ))
-    return sorted(regions, key=lambda r: r.mean_bust_prob, reverse=True)
+
+    ranked = sorted(regions, key=lambda region: region.mean_bust_prob, reverse=True)
+    for index, region in enumerate(ranked[:MAX_REGIONS], start=1):
+        region.name = f"Elevated review area {index}"
+    return ranked[:MAX_REGIONS]
+
+
+def _with_detected_regions(data: dict) -> dict:
+    """Backfill review regions for genuine cached grids created before this fix."""
+    if data.get("data_source") == "illustrative_only" or data.get("high_bust_regions"):
+        return data
+
+    bust_map = data.get("bust_probability_map")
+    lats = data.get("grid_latitudes")
+    lons = data.get("grid_longitudes")
+    if bust_map and lats and lons:
+        data["high_bust_regions"] = [
+            region.dict() for region in _detect_bust_regions(np.asarray(bust_map), lats, lons)
+        ]
+    return data
 
 
 @router.post("/predict", response_model=PredictResponse)
@@ -174,6 +217,7 @@ async def predict(request: PredictRequest):
     if cache_file.exists():
         with open(cache_file) as f:
             data = json.load(f)
+        data = _with_detected_regions(data)
         # Preserve data_source from JSON exactly — do NOT overwrite it
         print(f"[API] Cache hit: {cache_file} (data_source={data.get('data_source', 'unknown')})")
         return PredictResponse(**data)

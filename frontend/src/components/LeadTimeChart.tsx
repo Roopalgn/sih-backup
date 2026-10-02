@@ -111,7 +111,7 @@ export const LeadTimeChart: React.FC<LeadTimeChartProps> = ({ points, activeLead
         })}
       </svg>
       <div className="lead-chart-note">
-        Values for Days 3, 5, 7, 10 from live model · other leads not in training scope
+        Exact available outputs for Days 3, 5, 7, 10 · unavailable leads are not interpolated
       </div>
     </div>
   );

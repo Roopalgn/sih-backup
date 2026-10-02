@@ -67,7 +67,7 @@ class BustRegion(BaseModel):
     lat_center: float
     lon_center: float
     mean_bust_prob: float
-    area_fraction: float  # Fraction of the region's cells with bust_prob > 0.5
+    area_fraction: float  # Fraction of domain cells in the >= 0.30 review region
 
 
 class PredictResponse(BaseModel):
