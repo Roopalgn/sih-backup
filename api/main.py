@@ -28,6 +28,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes.predict import router as predict_router, load_model_at_startup
+from api.routes.events import router as events_router
 from api.routes.history import router as history_router
 
 
@@ -67,6 +68,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(predict_router, prefix="/api/v1", tags=["Prediction"])
+app.include_router(events_router, prefix="/api/v1", tags=["Events"])
 app.include_router(history_router, prefix="/api/v1", tags=["Historical"])
 
 

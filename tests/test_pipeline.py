@@ -109,3 +109,30 @@ def test_config_bust_threshold_range():
     cfg = load_config("config/settings.yaml")
     p = cfg["bust"]["percentile_threshold"]
     assert 50 <= p <= 99, f"Bust threshold {p} outside valid range [50, 99]"
+
+
+def test_review_regions_are_detected_from_real_grid_values():
+    """Connected cells above the review threshold must appear in the API output."""
+    from api.routes.predict import _detect_bust_regions, REGION_RISK_THRESHOLD
+
+    grid = np.array([
+        [0.05, 0.31, 0.33, 0.05],
+        [0.06, 0.35, 0.37, 0.04],
+        [0.08, 0.05, 0.04, 0.03],
+    ])
+    regions = _detect_bust_regions(grid, [10.0, 11.0, 12.0], [70.0, 71.0, 72.0, 73.0])
+
+    assert len(regions) == 1
+    assert regions[0].mean_bust_prob >= REGION_RISK_THRESHOLD
+    assert regions[0].area_fraction == round(4 / grid.size, 3)
+
+
+def test_events_api_returns_selector_metadata_only():
+    """The frontend catalog should not download gridded forecast maps."""
+    import asyncio
+    from api.routes.events import events
+
+    payload = asyncio.run(events())
+    assert payload["events"]
+    assert {"event_name", "request_date", "lead_day"} <= payload["events"][0].keys()
+    assert "bust_probability_map" not in payload["events"][0]

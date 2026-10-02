@@ -1,8 +1,9 @@
-import type { PredictRequest, PredictResponse, SubdivisionStat } from '../types';
+import { SHOWCASE_EVENTS } from './showcaseData';
+import type { PredictRequest, PredictResponse, ShowcaseEvent, SubdivisionStat } from '../types';
 
 const API_BASE = '/api/v1';
 
-let cachedCatalog: PredictResponse[] | null = null;
+let cachedEventCatalog: ShowcaseEvent[] | null = null;
 
 export async function checkApiHealth(): Promise<boolean> {
   try {
@@ -13,35 +14,28 @@ export async function checkApiHealth(): Promise<boolean> {
   }
 }
 
-export async function loadEventsCatalog(): Promise<PredictResponse[]> {
-  if (cachedCatalog) return cachedCatalog;
+export async function loadEventCatalog(): Promise<ShowcaseEvent[]> {
+  if (cachedEventCatalog) return cachedEventCatalog;
   try {
-    const res = await fetch('/data/events.json');
+    const res = await fetch(`${API_BASE}/events`);
     if (res.ok) {
-      const data = await res.json();
-      cachedCatalog = data;
-      return data;
+      const payload = await res.json();
+      if (Array.isArray(payload.events) && payload.events.length) {
+        const catalog = payload.events as ShowcaseEvent[];
+        cachedEventCatalog = catalog;
+        return catalog;
+      }
     }
   } catch {
-    // Fall back to typed showcase events
+    // Keep a clearly labelled, metadata-only selector available offline.
   }
 
-  // An unavailable cache is empty. Metadata-only showcase cards must never
-  // be promoted to prediction maps or numeric model output.
-  cachedCatalog = [];
-  return cachedCatalog;
+  cachedEventCatalog = SHOWCASE_EVENTS;
+  return cachedEventCatalog;
 }
 
 export async function fetchPrediction(req: PredictRequest): Promise<PredictResponse> {
   // Only accept an exact date/lead/variable match. Never relabel a nearby case.
-  const catalog = await loadEventsCatalog();
-  const matchedEvent = catalog.find(
-    (e) =>
-      e.request_date === req.date &&
-      e.lead_day === req.lead_day &&
-      e.variable === req.variable
-  );
-
   if (req.use_cache !== false) {
     try {
       const res = await fetch(`${API_BASE}/predict`, {
@@ -53,12 +47,6 @@ export async function fetchPrediction(req: PredictRequest): Promise<PredictRespo
     } catch {
       // Continue to exact local cache when the API is offline.
     }
-  }
-
-  // Local cached events are useful for an offline judge demo, with provenance
-  // explicitly downgraded to a saved result rather than live inference.
-  if (matchedEvent) {
-    return { ...matchedEvent, data_source: matchedEvent.data_source === 'illustrative_only' ? 'illustrative_only' : 'precomputed_cache', from_cache: true };
   }
 
   throw new Error(`Prediction unavailable for ${req.date} (Day ${req.lead_day})`);

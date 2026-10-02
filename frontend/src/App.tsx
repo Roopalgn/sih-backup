@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, CalendarDays, Check, ChevronDown, CircleHelp, 
 import { ForecastMap } from './components/ForecastMap';
 import { LeadTimeChart } from './components/LeadTimeChart';
 import { SHOWCASE_EVENTS } from './api/showcaseData';
-import { fetchPrediction } from './api/client';
+import { fetchPrediction, loadEventCatalog } from './api/client';
 import type { PredictResponse, ShowcaseEvent } from './types';
 
 const LEADS = [1,2,3,4,5,6,7,8,9,10];
@@ -15,6 +15,7 @@ interface LeadPoint { day: number; conf: number; bust: number; isReal: boolean; 
 
 export const App: React.FC = () => {
   const [event, setEvent] = useState<ShowcaseEvent>(SHOWCASE_EVENTS.find(e => e.request_date === '2022-06-25') ?? SHOWCASE_EVENTS[0]);
+  const [events, setEvents] = useState<ShowcaseEvent[]>(SHOWCASE_EVENTS);
   const [date, setDate] = useState(event.request_date);
   const [lead, setLead] = useState(event.lead_day);
   const [requestState, setRequestState] = useState<{key:string;data?:PredictResponse;error?:string}|null>(null);
@@ -41,6 +42,17 @@ export const App: React.FC = () => {
     return ()=>{alive=false};
   },[]);
 
+  // The selector follows the backend catalog, so newly generated showcase
+  // cases appear without duplicating event metadata in the UI.
+  useEffect(() => {
+    let alive = true;
+    loadEventCatalog().then(catalog => {
+      if (!alive || !catalog.length) return;
+      setEvents(catalog);
+    });
+    return () => { alive = false; };
+  }, []);
+
   // Fetch active prediction
   useEffect(() => {
     let alive=true;
@@ -53,7 +65,6 @@ export const App: React.FC = () => {
   // Fetch all 4 lead days for lead-time chart whenever date changes
   useEffect(() => {
     let alive = true;
-    setLeadPoints([]);
     Promise.allSettled(
       DATA_LEADS.map(d => fetchPrediction({date, lead_day:d, variable:'rainfall', use_cache:true}))
     ).then(results => {
@@ -62,11 +73,6 @@ export const App: React.FC = () => {
         const r = results[i];
         if (r.status === 'fulfilled') {
           return { day: d, conf: r.value.mean_confidence, bust: r.value.mean_bust_probability * 100, isReal: r.value.data_source === 'live_model' };
-        }
-        // Fallback: use showcase event data for this date/lead if available
-        const ev = SHOWCASE_EVENTS.find(e => e.request_date === date && e.lead_day === d);
-        if (ev && ev.mean_confidence != null && ev.mean_bust_probability != null) {
-          return { day: d, conf: ev.mean_confidence, bust: ev.mean_bust_probability * 100, isReal: false };
         }
         return null;
       }).filter(Boolean) as LeadPoint[];
@@ -96,7 +102,7 @@ export const App: React.FC = () => {
       <aside className="rail"><button className="rail-item selected" onClick={()=>document.getElementById("home")?.scrollIntoView({behavior:"smooth"})}><Layers3 size={18}/><span>Watch</span></button><button className="rail-item" onClick={()=>document.getElementById('evidence')?.scrollIntoView({behavior:'smooth'})}><Activity size={18}/><span>Evidence</span></button><button className="rail-item" onClick={()=>document.getElementById('about')?.scrollIntoView({behavior:'smooth'})}><Database size={18}/><span>Data</span></button><div className="rail-spacer"/><div className="rail-footer"><span>MOES</span><small>NCMRWF<br/>CHALLENGE</small></div></aside>
       <main className="main-view" id="home">
         <section className="page-heading"><div className="weather-scene" aria-hidden="true"><div className="radar-orbit orbit-one"/><div className="radar-orbit orbit-two"/><div className="radar-orbit orbit-three"/><div className="weather-cloud cloud-back"/><div className="weather-cloud cloud-front"/><div className="weather-rain"/><span className="weather-coordinate">MONSOON / INDIA</span></div><div className="heading-copy"><div className="eyebrow"><span className="eyebrow-line"/>NCMRWF CHALLENGE / SIH26079</div><h1>Forecast <em>Intelligence.</em></h1><p>Locate forecast failure. Understand the signal. Plan with confidence.</p></div><div className="heading-date"><CalendarDays size={15}/><span>{shortDate(date)}</span><ChevronDown size={14}/></div></section>
-        <section className="scenario-strip"><div className="scenario-select"><div className="scenario-icon"><CloudRain size={17}/></div><div className="scenario-content"><span className="micro-label">HISTORICAL CASE</span><select id="scenario-select" aria-label="Choose historical case" value={event.event_name} onChange={e=>{const next=SHOWCASE_EVENTS.find(item=>item.event_name===e.target.value);if(next)selectEvent(next)}}>{SHOWCASE_EVENTS.map(item=><option key={item.event_name} value={item.event_name}>{item.event_name}</option>)}</select></div></div><div className="scenario-meta"><span><MapPin size={14}/> India · 4 monitored regions</span><span><Satellite size={14}/> NOAA GEFSv12</span><span className="provenance-chip"><i/>{label}</span></div></section>
+        <section className="scenario-strip"><div className="scenario-select"><div className="scenario-icon"><CloudRain size={17}/></div><div className="scenario-content"><span className="micro-label">HISTORICAL CASE</span><select id="scenario-select" aria-label="Choose historical case" value={event.event_name} onChange={e=>{const next=events.find(item=>item.event_name===e.target.value);if(next)selectEvent(next)}}>{events.map(item=><option key={`${item.event_name}-${item.request_date}-${item.lead_day}`} value={item.event_name}>{item.event_name}</option>)}</select></div></div><div className="scenario-meta"><span><MapPin size={14}/> India · 4 monitored regions</span><span><Satellite size={14}/> NOAA GEFSv12</span><span className="provenance-chip"><i/>{label}</span></div></section>
 
         {/* Horizon selector + Lead-time chart side by side */}
         <section className="horizon-card">
@@ -125,7 +131,8 @@ export const App: React.FC = () => {
           <aside className="evidence-card" id="evidence"><div className="evidence-head"><div><div className="panel-kicker">SIGNAL REVIEW</div><h2>Forecast insights</h2></div><span className="evidence-count"><Sparkles size={13}/> MODEL</span></div><div className="signal-box"><div className="signal-line"><span className="signal-symbol"><AlertTriangle size={16}/></span><div><strong>{data?.high_bust_regions?.length?`${data.high_bust_regions.length} flagged areas`:data ? 'No flagged regions in this result' : 'Awaiting spatial signal'}</strong><small>{data?'Ranked connected high-risk regions':'Select a case with an available prediction'}</small></div></div>{data?.high_bust_regions?.slice(0,3).map((region,index)=><div className="region-row" key={`${region.name}-${index}`}><span className="region-rank">0{index+1}</span><span className="region-name">{region.name}</span><span className="region-risk">{(region.mean_bust_prob*100).toFixed(0)}%</span></div>)}</div><div className="evidence-section"><div className="section-title"><span>MODEL ATTRIBUTION</span><span className="not-causality">SENSITIVITY · NOT CAUSALITY</span></div>{data?.top_drivers?.length?data.top_drivers.slice(0,3).map(driver=><div className="driver-row" key={driver.channel_name}><div className="driver-label"><span>{driver.channel_name}</span><span>{driver.attribution_pct.toFixed(1)}%</span></div><div className="driver-track"><i style={{width:`${Math.min(driver.attribution_pct,100)}%`}}/></div></div>):<div className="empty-copy">No attribution evidence is available for this request.</div>}</div><div className="evidence-callout"><div className="callout-heading"><Wind size={15}/> HOW TO READ THIS</div><p>{data?.description||'A bust probability estimates the chance of exceeding the training-period error threshold. This project does not include the checkpoint or source grids needed to independently verify the cached model output.'}</p></div><button className="review-button" onClick={toggleReview} disabled={!data}><Check size={15}/>{reviewed?'Saved for forecaster review':'Mark for forecaster review'}<span>{reviewed?'✓':'↗'}</span></button></aside>
         </section>
 
-        <section className="bottom-grid" id="about"><article className="about-card"><div className="about-icon"><Database size={17}/></div><div><div className="panel-kicker">DATA &amp; SCOPE</div><h3>Rainfall · 4 IMD subdivisions · 2021–22</h3><p>NOAA GEFSv12 control forecast compared with IMD gridded rainfall. Current project scope documents Days 3, 5, 7 and 10 only.</p></div></article><article className="about-card"><div className="about-icon amber"><CircleHelp size={17}/></div><div><div className="panel-kicker">PROTOTYPE LIMITATION</div><h3>Results need independent verification</h3><p>Cached maps are shown as saved outputs. This project package has no training checkpoint or raw gridded input data; predictive skill and lineage cannot be confirmed here.</p></div></article></section>
+        <section className="how-it-works" aria-labelledby="how-it-works-title"><div className="workflow-heading"><div><div className="panel-kicker">METHOD / TRACEABLE WORKFLOW</div><h2 id="how-it-works-title">How DRISHTI works</h2><p>Each view keeps the forecast signal, model output and review decision visibly separate.</p></div><span>01 → 03</span></div><div className="workflow-steps"><article className="workflow-step"><span className="workflow-number">01</span><Satellite size={19}/><h3>Ingest forecast fields</h3><p>GEFSv12 rainfall, location and seasonal features are aligned to the selected initialization date and lead.</p></article><article className="workflow-step"><span className="workflow-number">02</span><Activity size={19}/><h3>Score forecast failure</h3><p>The dual-head model estimates error magnitude and the chance of exceeding the training-window P90 error threshold.</p></article><article className="workflow-step"><span className="workflow-number">03</span><Sparkles size={19}/><h3>Review spatial evidence</h3><p>Connected elevated-risk areas and Integrated Gradients help a forecaster inspect—not automate—the decision.</p></article></div></section>
+        <section className="bottom-grid" id="about"><article className="about-card"><div className="about-icon"><Database size={17}/></div><div><div className="panel-kicker">DATA &amp; SCOPE</div><h3>Rainfall · 4 IMD subdivisions · 2021–22</h3><p>NOAA GEFSv12 control forecast compared with IMD gridded rainfall. Current project scope documents Days 3, 5, 7 and 10 only.</p></div></article><article className="about-card"><div className="about-icon amber"><CircleHelp size={17}/></div><div><div className="panel-kicker">MODEL SKILL / PROTOTYPE</div><h3>Reported validation AUC: 0.46</h3><p>Built on two monsoon seasons at prototype scale. Treat it as an operational research signal, not a validated accuracy claim; expand the training set before deployment.</p></div></article></section>
         <footer className="page-footer"><span>DRISHTI <i>·</i> SIH26079</span><span>Prototype for the NCMRWF problem statement · Ministry of Earth Sciences</span><button><Database size={13}/> Operational prototype</button></footer>
       </main>
     </div>

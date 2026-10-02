@@ -46,7 +46,7 @@ export interface ShowcaseEvent {
   lead_day: number;
   variable: string;
   description: string;
-  event_type: string;
+  event_type?: string | null;
   data_source?: string;
   mean_confidence?: number;
   mean_bust_probability?: number;
